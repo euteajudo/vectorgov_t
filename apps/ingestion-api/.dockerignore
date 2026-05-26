@@ -1,0 +1,27 @@
+# Não incluir arquivos JS/TS no build do container Python
+node_modules/
+src/
+package.json
+package-lock.json
+pnpm-lock.yaml
+tsconfig.json
+wrangler.toml
+.wrangler/
+
+# Não incluir caches Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+
+# Artifacts locais
+_*.json
+_*.py
+install_*.log
+*.log
+
+# Git
+.git/
+.gitignore
