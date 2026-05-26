@@ -1,0 +1,828 @@
+"""
+Camada 2 — Classificação Regex de blocos PyMuPDF em dispositivos legais.
+Versão corrigida: ordem de prioridade DISPOSITIVOS > FILTROS.
+
+Origem: app de testes PyMuPDF (validado com IN 65/2021 e IN 58/2022)
+Integrado ao rag-gpu-server como src/extraction/regex_classifier.py
+"""
+
+import re
+from dataclasses import dataclass, field
+
+# ============================================================
+# ClassifiedDevice — output para o pipeline
+# ============================================================
+
+@dataclass
+class ClassifiedDevice:
+    """Dispositivo legal classificado pelo regex, com offsets nativos do PyMuPDF."""
+    device_type: str           # "article", "paragraph", "inciso", "alinea"
+    span_id: str               # "ART-005", "PAR-005-1", "INC-005-I", "ALI-005-I-a"
+    parent_span_id: str        # "" para artigos, "ART-005" para filhos
+    children_span_ids: list    # ["PAR-005-1", "PAR-005-2"]
+    text: str                  # texto completo do bloco
+    text_preview: str          # primeiros 120 chars
+    identifier: str            # "Art. 5º", "§ 1º", "I", "a"
+    article_number: int        # 5 (extraído do span_id)
+    hierarchy_depth: int       # 0=artigo, 1=§/inciso, 2=inciso sob §, 3=alínea
+    char_start: int            # offset global no canonical_text (NATIVO)
+    char_end: int              # offset global no canonical_text (NATIVO)
+    page_number: int           # página (1-indexed)
+    bbox: list = field(default_factory=list)  # [x0, y0, x1, y1] PDF points
+
+# ============================================================
+# Regex patterns
+# ============================================================
+
+RE_ARTICLE = re.compile(
+    r"^\s*Art\.\s*(\d+(?:\.\d+)*)"
+    r"[º°o]?"
+    r"(-[A-Za-z]+)?"
+    r"[\w-]*"
+    r"[.\s]",
+    re.IGNORECASE,
+)
+
+RE_PARAGRAPH = re.compile(
+    r"^\s*("
+    r"§\s*(\d+)[º°o]?\.?\s"
+    r"|Par[aá]grafo\s+[uú]nico"
+    r")",
+    re.IGNORECASE,
+)
+
+ROMAN_NUMERALS = [
+    "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X",
+    "XI", "XII", "XIII", "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX",
+    "XXI", "XXII", "XXIII", "XXIV", "XXV", "XXVI", "XXVII", "XXVIII", "XXIX", "XXX",
+    "XXXI", "XXXII", "XXXIII", "XXXIV", "XXXV", "XXXVI", "XXXVII", "XXXVIII", "XXXIX", "XL",
+    "XLI", "XLII", "XLIII", "XLIV", "XLV", "XLVI", "XLVII", "XLVIII", "XLIX", "L",
+    "LI", "LII", "LIII", "LIV", "LV", "LVI", "LVII", "LVIII", "LIX", "LX",
+    "LXI", "LXII", "LXIII", "LXIV", "LXV", "LXVI", "LXVII", "LXVIII", "LXIX", "LXX",
+    "LXXI", "LXXII", "LXXIII", "LXXIV", "LXXV", "LXXVI", "LXXVII", "LXXVIII", "LXXIX", "LXXX",
+]
+_romanos_sorted = sorted(ROMAN_NUMERALS, key=len, reverse=True)
+_romanos_pattern = "|".join(_romanos_sorted)
+RE_INCISO = re.compile(rf"^\s*({_romanos_pattern})\s*[-–—]\s?")
+
+RE_ALINEA = re.compile(r"^\s*([a-z])\)\s")
+
+RE_CHAPTER = re.compile(r"^\s*CAP[ÍI]TULO\s", re.IGNORECASE)
+
+RE_ALL_CAPS = re.compile(r"^[A-ZÁÉÍÓÚÂÊÔÃÕÇ\s\-–—/,.:;()]+$")
+
+RE_LEGAL_MARKER = re.compile(
+    r"^\s*(Art\.|§|" + _romanos_pattern + r"\s*[-–—]|[a-z]\)|\d+\.)",
+    re.IGNORECASE,
+)
+
+ROMAN_TO_INT = {r: i + 1 for i, r in enumerate(ROMAN_NUMERALS)}
+
+
+def _children_sort_key(span_id: str) -> tuple:
+    """Ordena children_span_ids por tipo + número (Roman-aware)."""
+    parts = span_id.split("-")
+    prefix = parts[0] if parts else ""
+    device_order = {"ART": 0, "INC": 1, "ALI": 2, "PAR": 3}.get(prefix, 9)
+    num = 9999
+    try:
+        if prefix == "PAR" and len(parts) >= 3:
+            num = int(parts[2]) if parts[2] != "UNICO" else 0
+        elif prefix == "INC" and len(parts) >= 3:
+            num = ROMAN_TO_INT.get(parts[2], 9999)
+        elif prefix == "ALI" and len(parts) >= 4:
+            num = ord(parts[3].lower()) - ord('a')
+    except (ValueError, IndexError):
+        pass
+    return (device_order, num)
+
+# Detecta linhas de índice/sumário (ex: "Art. 1º ..................... Pág 12")
+RE_SUMMARY_LINE = re.compile(r"(\.{5,}|\s_\s|\s-\s{2,})")
+
+# ============================================================
+# Metadata detection
+# ============================================================
+
+METADATA_KEYWORDS = [
+    "DIÁRIO OFICIAL DA UNIÃO",
+    "Publicado em:",
+    "Imprensa Nacional",
+    "https://",
+    "http://",
+]
+
+def _get_first_span(block):
+    lines = block.get("lines", [])
+    if lines:
+        spans = lines[0].get("spans", [])
+        if spans:
+            return spans[0]
+    return None
+
+
+def _is_metadata(block):
+    text = block["text"]
+    # Font check removido: ArialMT/Arial-BoldMT são fontes genéricas usadas
+    # em PDFs gerados por navegadores (ex: Planalto). Usar font sozinha como
+    # critério filtra TODOS os dispositivos legais nesses PDFs.
+    # Os keyword checks e regex de data abaixo são suficientes.
+    for kw in METADATA_KEYWORDS:
+        if kw in text:
+            return True
+    if re.match(r"^\d{2}/\d{2}/\d{4},?\s+\d{2}:\d{2}", text):
+        return True
+    return False
+
+
+# ============================================================
+# Preâmbulo detection
+# ============================================================
+
+PREAMBULO_PATTERNS = [
+    re.compile(r"^\s*O\s+(SECRETÁRI[OA]|MINISTRO|PRESIDENTE|DIRETOR)", re.IGNORECASE),
+    re.compile(r"^\s*(RESOLVE|CONSIDERANDO)", re.IGNORECASE),
+    re.compile(r"no uso d[ea]s?\s+atribuiç", re.IGNORECASE),
+    re.compile(r"resolve\s*:", re.IGNORECASE),
+]
+
+RE_NOME_NORMA = re.compile(
+    r"^\s*(INSTRUÇÃO NORMATIVA|DECRETO|LEI\s+(COMPLEMENTAR\s+)?N[º°]|PORTARIA|RESOLUÇÃO)",
+    re.IGNORECASE,
+)
+
+RE_EMENTA = re.compile(
+    r"^\s*(Dispõe|Altera|Regulamenta|Estabelece|Institui)\s+",
+    re.IGNORECASE,
+)
+
+RE_ORGAO = re.compile(r"^\s*[OÓ]rg[aã]o\s*:", re.IGNORECASE)
+
+
+def _is_preambulo(text):
+    for pat in PREAMBULO_PATTERNS:
+        if pat.search(text):
+            return True
+    return False
+
+
+# ============================================================
+# Cabecalho / subtítulo detection
+# ============================================================
+
+def _is_cabecalho(block):
+    text = block["text"].strip()
+    span = _get_first_span(block)
+    if RE_CHAPTER.match(text):
+        return True
+    if RE_ALL_CAPS.match(text) and len(text) < 120:
+        return True
+    if RE_LEGAL_MARKER.match(text):
+        return False
+    if len(text) < 80:
+        if span and bool(span.get("flags", 0) & 16):
+            return True
+        if len(text) < 60 and text.count(".") <= 1 and text.count(",") <= 1:
+            if text[0].isupper() and len(text.split()) <= 10:
+                return True
+    return False
+
+
+# ============================================================
+# Classificador principal
+# ============================================================
+
+def classify_block(block):
+    """
+    Classifica um bloco. Retorna (device_type, identifier, reason).
+    ORDEM: 1.Dispositivos -> 2.Metadata por conteúdo -> 3.Filtros editoriais -> 4.Nao classificado
+    """
+    text = block["text"].strip()
+    if not text:
+        return "metadata", None, "Bloco vazio"
+
+    # PASSO 0: Nenhum filtro de revogação durante a ingestão.
+    # Artigos revogados (com strikethrough ou "Vigência encerrada") são
+    # ingeridos normalmente. A revogação é tratada pós-ingestão via flag
+    # no campo "theme" (ex: "#REVOGADO") e filtrada no retrieval.
+    # O flag has_strikethrough é propagado para os devices e usado como
+    # tiebreaker no Pass 2.7 (dedup) quando existem versões duplicadas
+    # do mesmo span_id (ex: versão revogada + versão vigente).
+    # Indicador textual "Vigência encerrada" é marcado no bloco para uso
+    # posterior no dedup (Pass 2.7) como tiebreaker.
+    if "vigência encerrada" in re.sub(r"\s+", " ", text).lower():
+        block["has_vigencia_encerrada"] = True
+
+    # PASSO 1: Dispositivos normativos (PRIORIDADE MÁXIMA)
+    is_summary = bool(RE_SUMMARY_LINE.search(text))
+
+    m = RE_ARTICLE.match(text)
+    if m:
+        if is_summary:
+            return "metadata", None, "Linha de sumário/índice"
+        num_str = m.group(1)  # "337", "5", "1.048"
+        suffix = m.group(2) or ""  # "-E" or ""
+        num_int = int(num_str.replace(".", ""))
+        if suffix:
+            identifier = f"Art. {num_int}{suffix}"
+        else:
+            identifier = f"Art. {num_int}º"
+        return "article", identifier, identifier
+
+    m = RE_PARAGRAPH.match(text)
+    if m:
+        if is_summary:
+            return "metadata", None, "Linha de sumário/índice"
+        if m.group(2):
+            num = int(m.group(2))
+            return "paragraph", f"§ {num}º", f"§ {num}º"
+        else:
+            return "paragraph", "Parágrafo único", "Parágrafo único"
+
+    m = RE_INCISO.match(text)
+    if m:
+        if is_summary:
+            return "metadata", None, "Linha de sumário/índice"
+        roman = m.group(1)
+        return "inciso", roman, f"Inciso {roman}"
+
+    m = RE_ALINEA.match(text)
+    if m:
+        if is_summary:
+            return "metadata", None, "Linha de sumário/índice"
+        letter = m.group(1)
+        return "alinea", letter, f"Alínea {letter}"
+
+    # PASSO 2: Metadata por conteúdo (keywords, regex de data, paginação)
+    if _is_metadata(block):
+        return "metadata", None, "Keyword estática"
+    if re.match(r"^(p[áa]ginas?|p[áa]g\.?|fls?\.?)?\s*\d+(?:\s*(?:/|de)\s*\d+)?\s*$", text, re.IGNORECASE):
+        return "metadata", None, "Paginação solta"
+
+    # PASSO 3: Filtros editoriais
+    if RE_ORGAO.match(text):
+        return "metadata", None, "Órgão emissor"
+    if RE_NOME_NORMA.match(text):
+        return "cabecalho", None, "Nome da norma"
+    if _is_preambulo(text):
+        return "preambulo", None, "Preâmbulo"
+    if RE_EMENTA.match(text):
+        return "preambulo", None, "Ementa"
+    if _is_cabecalho(block):
+        return "cabecalho", None, "Texto título/cabeçalho"
+
+    # PASSO 4: Nao classificado
+    return "nao_classificado", None, "Sem match"
+
+
+# ============================================================
+# Helpers para span_id
+# ============================================================
+
+def _extract_article_number(identifier):
+    m = re.search(r"(\d+)", identifier or "")
+    return int(m.group(1)) if m else 0
+
+def _extract_article_parts(identifier):
+    """Extrai numero e sufixo do identifier de artigo.
+    'Art. 337-E' → (337, '-E')
+    'Art. 5º' → (5, '')
+    'Art. 1.048' → (1048, '')
+    'Art. 6-A' → (6, '-A')
+    """
+    if not identifier:
+        return 0, ""
+    m = re.search(r"(\d+(?:\.\d+)*)(?:[º°o])?(-[A-Za-z]+)?", identifier)
+    if not m:
+        return 0, ""
+    num = int(m.group(1).replace(".", ""))
+    suffix = m.group(2) or ""
+    return num, suffix
+
+def _extract_paragraph_number(identifier):
+    if identifier and ("único" in identifier.lower() or "unico" in identifier.lower()):
+        return 0
+    m = re.search(r"(\d+)", identifier or "")
+    return int(m.group(1)) if m else 0
+
+def _extract_article_number_from_span_id(span_id):
+    """Extrai o numero do artigo de qualquer span_id: ART-005 -> 5, INC-003-II -> 3"""
+    m = re.match(r"[A-Z]+-(\d+)", span_id or "")
+    return int(m.group(1)) if m else 0
+
+def _build_span_id(device_type, identifier, parent_chain):
+    if device_type == "article":
+        num, suffix = _extract_article_parts(identifier)
+        return f"ART-{num:03d}{suffix}"
+    art_suffix = parent_chain.get("article_suffix", "")
+    if device_type == "paragraph":
+        art_num = parent_chain.get("article_num", 0)
+        par_num = _extract_paragraph_number(identifier)
+        return f"PAR-{art_num:03d}{art_suffix}-{par_num}"
+    if device_type == "inciso":
+        art_num = parent_chain.get("article_num", 0)
+        par_num = parent_chain.get("paragraph_num", None)
+        roman = (identifier or "").upper()
+        if par_num is not None:
+            return f"INC-{art_num:03d}{art_suffix}-{par_num}-{roman}"
+        else:
+            return f"INC-{art_num:03d}{art_suffix}-{roman}"
+    if device_type == "alinea":
+        art_num = parent_chain.get("article_num", 0)
+        par_num = parent_chain.get("paragraph_num", None)
+        inc_num = parent_chain.get("inciso_num", None)
+        letter = identifier or ""
+        parts = [f"ALI-{art_num:03d}{art_suffix}"]
+        if par_num is not None:
+            parts.append(str(par_num))
+        if inc_num is not None:
+            parts.append(str(inc_num))
+        parts.append(letter)
+        return "-".join(parts)
+    return None
+
+
+# ============================================================
+# Classificacao do documento inteiro
+# ============================================================
+
+def classify_document(pages):
+    """
+    Classifica todos os blocos do documento (3 passes).
+    Input: lista de dicts de paginas com blocos PyMuPDF.
+    Output: dict com 'devices', 'filtered', 'unclassified', 'stats'.
+    """
+    # Flatten
+    all_blocks = []
+    for page in pages:
+        for block in page["blocks"]:
+            all_blocks.append({**block, "page_number": page["page_number"]})
+    all_blocks.sort(key=lambda b: b["char_start"])
+
+    # Pass 0.5: Split de blocos que misturam header de browser com texto legal.
+    # PDFs impressos do Planalto injetam cabeçalhos (data/hora, URL, paginação)
+    # nas quebras de página. Quando um dispositivo cruza a página, PyMuPDF pode
+    # agrupar o header + continuação num único bloco. _is_metadata() filtra o
+    # bloco inteiro e o texto de continuação se perde.
+    # Solução: detectar header de browser no INÍCIO do bloco e, se houver texto
+    # legal substancial depois, splittar em dois blocos.
+    RE_BROWSER_HEADER_PREFIX = re.compile(
+        r"^("
+        r"(?:\d{2}/\d{2}/\d{4},?\s+\d{2}:\d{2}[^\n]*\n)"  # data/hora
+        r"(?:[^\n]*(?:https?://|\.gov\.br|\.htm)[^\n]*\n)?"  # URL (opcional)
+        r"(?:[^\n]*\d+\s*/\s*\d+[^\n]*\n)?"                  # paginação (opcional)
+        r")"
+    )
+    split_blocks = []
+    blocks_split_count = 0
+    for block in all_blocks:
+        text = block["text"]
+        m = RE_BROWSER_HEADER_PREFIX.match(text)
+        if m:
+            header_end = m.end()
+            remaining = text[header_end:].strip()
+            if remaining and len(remaining) > 20:
+                # Split: header vira um bloco, continuação vira outro
+                header_block = {
+                    **block,
+                    "text": text[:header_end].strip(),
+                    "char_end": block["char_start"] + header_end,
+                }
+                continuation_block = {
+                    **block,
+                    "text": remaining,
+                    "char_start": block["char_start"] + header_end,
+                    "block_index": block["block_index"] + 10000,
+                }
+                split_blocks.append(header_block)
+                split_blocks.append(continuation_block)
+                blocks_split_count += 1
+                continue
+        split_blocks.append(block)
+    all_blocks = split_blocks
+    all_blocks.sort(key=lambda b: b["char_start"])
+
+    # Pass 0.6: Split de blocos onde "Art. N." aparece apos cabecalhos de
+    # secao/subsecao/capitulo. PyMuPDF as vezes agrupa varios cabecalhos
+    # estruturais com o inicio do artigo num unico bloco quando nao ha
+    # quebra de pagina entre eles. Resultado: RE_ARTICLE.match() falha porque
+    # bloco comeca com "Subsecao I\nAdocao\nArt. 35..." e o artigo nunca eh
+    # classificado (vira "nao_classificado").
+    # Caso real: IN-01-2026 ART-035 ausente apos 2 ingestoes (17/05/2026 e
+    # 18/05/2026) com mesma falha deterministica. Investigacao confirmou
+    # que canonical.md tem o texto, mas span nao foi criado.
+    # Solucao: detectar "Art. N." dentro do bloco (nao na primeira linha) e
+    # splittar em dois blocos: cabecalhos -> metadata, "Art. N. ..." -> article.
+    RE_ARTICLE_LINE = re.compile(
+        r"(?:^|\n)(\s*Art\.\s*\d+(?:\.\d+)*[º°o]?(?:-[A-Za-z]+)?[.\s])",
+        re.IGNORECASE,
+    )
+    # Headers estruturais que justificam o split (Subsecao/Secao/Capitulo/Titulo/Livro/Parte).
+    # Sem este guard, qualquer preambulo com citacao "...no\nArt. 12 da Lei..." seria
+    # splittado e o fragmento "Art. 12 da Lei..." seria classificado como ART-012 falso.
+    RE_STRUCTURAL_HEADER = re.compile(
+        r"^\s*(CAP[ÍI]TULO|T[ÍI]TULO|SE[ÇC][ÃA]O|SUBSE[ÇC][ÃA]O|LIVRO|PARTE)\b",
+        re.IGNORECASE,
+    )
+    split_blocks = []
+    blocks_split_art_count = 0
+    for block in all_blocks:
+        text = block["text"]
+        # Procura "Art. N." em qualquer linha do bloco
+        m = RE_ARTICLE_LINE.search(text)
+        if not m:
+            split_blocks.append(block)
+            continue
+        # Posicao do "Art." no texto (apos eventual \n inicial do match)
+        art_start = m.start(1)
+        # Se "Art." ja esta no comeco do bloco, deixa o classifier resolver normalmente
+        if art_start == 0:
+            split_blocks.append(block)
+            continue
+        pre_text = text[:art_start].rstrip()
+        art_text = text[art_start:].lstrip()
+        # Conservador: so splita se o trecho pre eh curto (cabecalhos curtos,
+        # tipicamente "Subsecao I\nAdocao\n" tem <100 chars) e o trecho do
+        # artigo eh substancial (>50 chars).
+        if not pre_text or len(pre_text) > 200 or len(art_text) < 50:
+            split_blocks.append(block)
+            continue
+        # Guard contra falsos positivos: o split so eh seguro se alguma linha
+        # de pre_text for um header estrutural (Subsecao/Secao/Capitulo/etc)
+        # OU uma linha curta all-caps (titulo de subsecao tipo "ADOCAO").
+        # Sem isso, preambulos com citacao tipo "...considerando\nArt. 12 da
+        # Lei 8.666/93..." gerariam ART-012 falsos.
+        pre_lines = [ln.strip() for ln in pre_text.split("\n") if ln.strip()]
+        has_structural_header = any(
+            RE_STRUCTURAL_HEADER.match(ln)
+            or (RE_ALL_CAPS.match(ln) and len(ln) < 80)
+            for ln in pre_lines
+        )
+        if not has_structural_header:
+            split_blocks.append(block)
+            continue
+        pre_block = {
+            **block,
+            "text": pre_text,
+            "char_end": block["char_start"] + len(pre_text),
+        }
+        art_block = {
+            **block,
+            "text": art_text,
+            "char_start": block["char_start"] + (len(text) - len(art_text)),
+            "block_index": block["block_index"] + 20000,
+        }
+        split_blocks.append(pre_block)
+        split_blocks.append(art_block)
+        blocks_split_art_count += 1
+    all_blocks = split_blocks
+    all_blocks.sort(key=lambda b: b["char_start"])
+
+    # Pass 1: classify
+    classified = []
+    for block in all_blocks:
+        device_type, identifier, reason = classify_block(block)
+        classified.append({
+            "block": block, "device_type": device_type,
+            "identifier": identifier, "reason": reason,
+        })
+
+    # Pass 2: hierarchy
+    current_article = None
+    current_paragraph = None
+    current_inciso = None
+    devices = []
+    filtered = []
+    unclassified = []
+
+    for item in classified:
+        block = item["block"]
+        dtype = item["device_type"]
+        ident = item["identifier"]
+        reason = item["reason"]
+
+        if dtype in ("metadata", "cabecalho", "preambulo"):
+            filtered.append({
+                "block_index": block["block_index"],
+                "page_number": block["page_number"],
+                "filter_type": dtype,
+                "reason": reason,
+                "text_preview": block["text"][:80],
+            })
+            continue
+
+        if dtype == "nao_classificado":
+            unclassified.append({
+                "block_index": block["block_index"],
+                "page_number": block["page_number"],
+                "reason": reason,
+                "text_preview": block["text"][:80],
+            })
+            continue
+
+        parent_span_id = None
+        parent_chain = {}
+        hierarchy_depth = 0
+
+        if dtype == "article":
+            art_num, art_suffix = _extract_article_parts(ident)
+            parent_chain = {"article_num": art_num, "article_suffix": art_suffix}
+            current_article = {"span_id": None, "num": art_num, "suffix": art_suffix}
+            current_paragraph = None
+            current_inciso = None
+            hierarchy_depth = 0
+        elif dtype == "paragraph":
+            par_num = _extract_paragraph_number(ident)
+            if current_article:
+                parent_span_id = current_article["span_id"]
+                parent_chain = {"article_num": current_article["num"], "article_suffix": current_article.get("suffix", ""), "paragraph_num": par_num}
+            else:
+                # Parágrafo sem artigo pai (ex: seções narrativas de acórdãos)
+                # Reclassifica como nao_classificado para evitar órfão
+                unclassified.append({
+                    "block_index": block["block_index"],
+                    "page_number": block["page_number"],
+                    "reason": f"Parágrafo '{ident}' sem artigo pai (seção narrativa)",
+                    "text_preview": block["text"][:80],
+                })
+                continue
+            current_paragraph = {"span_id": None, "num": par_num}
+            current_inciso = None
+            hierarchy_depth = 1
+        elif dtype == "inciso":
+            roman = (ident or "").upper()
+            if current_paragraph:
+                parent_span_id = current_paragraph["span_id"]
+                parent_chain = {
+                    "article_num": current_article["num"] if current_article else 0,
+                    "article_suffix": current_article.get("suffix", "") if current_article else "",
+                    "paragraph_num": current_paragraph["num"],
+                    "inciso_num": roman,
+                }
+                hierarchy_depth = 2
+            elif current_article:
+                parent_span_id = current_article["span_id"]
+                parent_chain = {"article_num": current_article["num"], "article_suffix": current_article.get("suffix", ""), "inciso_num": roman}
+                hierarchy_depth = 1
+            else:
+                # Inciso sem artigo/parágrafo pai (ex: romanos em seções narrativas)
+                unclassified.append({
+                    "block_index": block["block_index"],
+                    "page_number": block["page_number"],
+                    "reason": f"Inciso '{ident}' sem artigo pai (seção narrativa)",
+                    "text_preview": block["text"][:80],
+                })
+                continue
+            current_inciso = {"span_id": None, "num": roman}
+        elif dtype == "alinea":
+            if current_inciso:
+                parent_span_id = current_inciso["span_id"]
+                parent_chain = {
+                    "article_num": current_article["num"] if current_article else 0,
+                    "article_suffix": current_article.get("suffix", "") if current_article else "",
+                    "paragraph_num": current_paragraph["num"] if current_paragraph else None,
+                    "inciso_num": current_inciso["num"],
+                }
+                hierarchy_depth = 3 if current_paragraph else 2
+            elif current_paragraph:
+                # Fallback: alínea diretamente sob parágrafo (sem inciso)
+                parent_span_id = current_paragraph["span_id"]
+                parent_chain = {
+                    "article_num": current_article["num"] if current_article else 0,
+                    "article_suffix": current_article.get("suffix", "") if current_article else "",
+                    "paragraph_num": current_paragraph["num"],
+                }
+                hierarchy_depth = 2
+            elif current_article:
+                # Fallback: alínea diretamente sob artigo
+                parent_span_id = current_article["span_id"]
+                parent_chain = {
+                    "article_num": current_article["num"],
+                    "article_suffix": current_article.get("suffix", ""),
+                }
+                hierarchy_depth = 1
+            else:
+                # Sem contexto legal (ex: itens a), b), c) em RELATÓRIO de acórdão)
+                # Reclassifica como nao_classificado
+                unclassified.append({
+                    "block_index": block["block_index"],
+                    "page_number": block["page_number"],
+                    "reason": f"Alínea '{ident}' sem contexto de artigo/inciso (seção narrativa)",
+                    "text_preview": block["text"][:80],
+                })
+                continue
+
+        span_id = _build_span_id(dtype, ident, parent_chain)
+
+        if dtype == "article" and current_article:
+            current_article["span_id"] = span_id
+        elif dtype == "paragraph" and current_paragraph:
+            current_paragraph["span_id"] = span_id
+        elif dtype == "inciso" and current_inciso:
+            current_inciso["span_id"] = span_id
+
+        devices.append({
+            "block_index": block["block_index"],
+            "page_number": block["page_number"],
+            "device_type": dtype,
+            "identifier": ident,
+            "span_id": span_id,
+            "parent_span_id": parent_span_id,
+            "hierarchy_depth": hierarchy_depth,
+            "text_preview": block["text"][:120],
+            "full_text": block["text"],
+            "char_start": block["char_start"],
+            "char_end": block["char_end"],
+            "bbox": block["bbox"],
+            "children_span_ids": [],
+            "has_strikethrough": block.get("has_strikethrough", False),
+            "has_vigencia_encerrada": block.get("has_vigencia_encerrada", False),
+        })
+
+    # Pass 2.5: Merge de blocos órfãos (continuação cross-page)
+    # Blocos "nao_classificado" que estão logo após um device classificado
+    # são provavelmente continuação do dispositivo anterior, fragmentados
+    # por cabeçalhos de página injetados pelo browser (data/hora, URL, paginação).
+    #
+    # Heurísticas de merge:
+    #   1. Gap <= 1500 chars: merge direto (PDFs browser-print têm headers de
+    #      ~100-400 chars por quebra de página; com múltiplas quebras pode chegar a ~1200)
+    #   2. Gap > 1500 mas device anterior termina com sentença incompleta
+    #      (preposição, conjunção, vírgula): merge mesmo assim — é quase
+    #      certamente continuação do dispositivo, apenas com gap inflado.
+    _INCOMPLETE_SENTENCE_RE = re.compile(
+        r"""(?:
+            [,]\s*$                                # vírgula no fim
+            | \b(?:e|ou|a|o|os|as|de|do|da|dos|das
+                  |no|na|nos|nas|ao|aos|à|às
+                  |em|com|por|para|que|se|como
+                  |sobre|entre|sob|sem|até
+                  |pelo|pela|pelos|pelas
+                  |seu|sua|seus|suas
+                  |um|uma|uns|umas
+                  |cujo|cuja|cujos|cujas
+                  |quando|onde|qual|quais
+                  |conforme|mediante|perante
+            )\s*$
+        )""",
+        re.IGNORECASE | re.VERBOSE,
+    )
+
+    merged_indices = []
+    if unclassified and devices:
+        devices.sort(key=lambda d: d["char_start"])
+
+        for i, orphan in enumerate(unclassified):
+            # Recuperar o bloco original para obter texto e offsets completos
+            orphan_block = None
+            for block in all_blocks:
+                if block["block_index"] == orphan["block_index"] and block["page_number"] == orphan["page_number"]:
+                    orphan_block = block
+                    break
+            if not orphan_block:
+                continue
+
+            orphan_text = orphan_block["text"].strip()
+            if not orphan_text:
+                continue
+
+            # Encontrar o device imediatamente anterior por char_start
+            prev_device = None
+            for d in reversed(devices):
+                if d["char_start"] < orphan_block["char_start"]:
+                    prev_device = d
+                    break
+
+            if prev_device is None:
+                continue
+
+            # Verificar proximidade: gap entre fim do device anterior e início do órfão.
+            # PDFs browser-print do Planalto injetam headers (URL, data, paginação)
+            # entre dispositivos, inflando o gap. Com múltiplas quebras de página,
+            # o gap pode chegar a ~1200 chars.
+            gap = orphan_block["char_start"] - prev_device["char_end"]
+
+            # Heurística 1: gap <= 1500 — merge direto
+            # Heurística 2: gap > 1500 mas sentença incompleta — merge mesmo assim
+            if gap > 1500:
+                # Só faz merge se o device anterior termina com sentença incompleta
+                prev_text = prev_device["full_text"].strip()
+                if not _INCOMPLETE_SENTENCE_RE.search(prev_text):
+                    continue
+
+            # Merge: append texto do órfão ao conteúdo semântico.
+            # NÃO estender char_end: entre o device e o órfão existem browser
+            # headers filtrados no canonical_text. Estender char_end faria o
+            # slice canonical_text[start:end] incluir lixo (URLs, datas, paginação)
+            # que apareceria no highlight da evidência.
+            prev_device["full_text"] = prev_device["full_text"] + "\n" + orphan_text
+            merged_indices.append(i)
+
+        # Remover órfãos que foram mergeados
+        unclassified = [u for i, u in enumerate(unclassified) if i not in merged_indices]
+
+    # Pass 2.7: Deduplicação de span_ids (versões revogadas do Planalto)
+    # PDFs do Planalto podem ter múltiplas versões do mesmo artigo: versões
+    # revogadas (riscadas ou com "Vigência encerrada") aparecem antes da vigente.
+    # Regra de prioridade para escolher qual cópia manter:
+    #   1. Preferir versão SEM indicadores de revogação (vigente)
+    #   2. Se todas têm indicadores, manter a ÚLTIMA (a vigente aparece
+    #      por último no layout do Planalto)
+    # Indicadores de revogação: has_strikethrough OU has_vigencia_encerrada
+    from collections import defaultdict
+    span_id_occurrences = defaultdict(list)
+    for idx, device in enumerate(devices):
+        span_id_occurrences[device["span_id"]].append(idx)
+
+    def _is_revoked(device):
+        return device.get("has_strikethrough", False) or device.get("has_vigencia_encerrada", False)
+
+    duplicates_removed = 0
+    revoked_removed = 0
+    keep_indices = set()
+    for span_id, indices in span_id_occurrences.items():
+        if len(indices) == 1:
+            keep_indices.add(indices[0])
+        else:
+            # Múltiplas versões: preferir sem indicadores de revogação
+            non_revoked = [i for i in indices if not _is_revoked(devices[i])]
+            if non_revoked:
+                # Manter a última versão sem revogação
+                keep_indices.add(non_revoked[-1])
+                revoked_removed += len(indices) - 1
+            else:
+                # Todas revogadas: manter última como fallback
+                keep_indices.add(indices[-1])
+                revoked_removed += len(indices) - 1
+            duplicates_removed += len(indices) - 1
+
+    if duplicates_removed > 0:
+        devices = [d for idx, d in enumerate(devices) if idx in keep_indices]
+
+    # Pass 3: children (com ordenação Roman-aware)
+    span_id_map = {d["span_id"]: d for d in devices}
+    for device in devices:
+        parent_id = device["parent_span_id"]
+        if parent_id and parent_id in span_id_map:
+            span_id_map[parent_id]["children_span_ids"].append(device["span_id"])
+
+    # Ordena children_span_ids de cada device por tipo + número (Roman-aware)
+    for device in devices:
+        if device["children_span_ids"]:
+            device["children_span_ids"].sort(key=_children_sort_key)
+
+    # Stats
+    by_device_type = {}
+    for d in devices:
+        by_device_type[d["device_type"]] = by_device_type.get(d["device_type"], 0) + 1
+    by_filter_type = {}
+    for f in filtered:
+        by_filter_type[f["filter_type"]] = by_filter_type.get(f["filter_type"], 0) + 1
+
+    return {
+        "devices": devices,
+        "filtered": filtered,
+        "unclassified": unclassified,
+        "stats": {
+            "total_blocks": len(all_blocks),
+            "devices": len(devices),
+            "filtered": len(filtered),
+            "unclassified": len(unclassified),
+            "blocks_split": blocks_split_count,
+            "orphans_merged": len(merged_indices),
+            "duplicates_removed": duplicates_removed,
+            "revoked_removed": revoked_removed,
+            "by_device_type": by_device_type,
+            "by_filter_type": by_filter_type,
+            "max_hierarchy_depth": max((d["hierarchy_depth"] for d in devices), default=0),
+        },
+    }
+
+
+# ============================================================
+# Interface para o pipeline de producao
+# ============================================================
+
+def classify_to_devices(pages_data) -> list[ClassifiedDevice]:
+    """
+    Interface principal para o pipeline.py.
+    Chama classify_document() e converte para List[ClassifiedDevice].
+    """
+    result = classify_document(pages_data)
+    devices = []
+    for d in result["devices"]:
+        devices.append(ClassifiedDevice(
+            device_type=d["device_type"],
+            span_id=d["span_id"],
+            parent_span_id=d["parent_span_id"] or "",
+            children_span_ids=d.get("children_span_ids", []),
+            text=d["full_text"],
+            text_preview=d["text_preview"],
+            identifier=d["identifier"] or "",
+            article_number=_extract_article_number_from_span_id(d["span_id"]),
+            hierarchy_depth=d["hierarchy_depth"],
+            char_start=d["char_start"],
+            char_end=d["char_end"],
+            page_number=d["page_number"],
+            bbox=d["bbox"],
+        ))
+    return devices
