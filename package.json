@@ -1,0 +1,23 @@
+{
+  "name": "vectorgov-t",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vectorgov_t — MCP server + agent system para análise de legislação tributária brasileira pós-reforma",
+  "packageManager": "pnpm@11.3.0",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm -r dev",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "clean": "pnpm -r exec rm -rf dist .turbo node_modules"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}

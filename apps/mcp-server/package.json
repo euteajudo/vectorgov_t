@@ -1,0 +1,28 @@
+{
+  "name": "@vectorgov-t/mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server com 13 tools + 8 agentes para análise jurídico-tributária",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/google": "^2.0.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "agents": "^0.2.0",
+    "ai": "^5.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251201.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0",
+    "wrangler": "^4.59.0"
+  }
+}
