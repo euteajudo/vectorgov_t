@@ -1,3 +1,11 @@
 packages:
   - "apps/*"
   - "packages/*"
+
+# Build scripts permitidos (pnpm 11+)
+# Necessários para Cloudflare Workers (workerd), Next.js (esbuild, sharp), Babel runtime (core-js-pure)
+allowBuilds:
+  core-js-pure: true
+  esbuild: true
+  sharp: true
+  workerd: true
