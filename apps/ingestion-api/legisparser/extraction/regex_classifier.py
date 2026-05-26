@@ -80,7 +80,13 @@ ROMAN_TO_INT = {r: i + 1 for i, r in enumerate(ROMAN_NUMERALS)}
 
 
 def _children_sort_key(span_id: str) -> tuple:
-    """Ordena children_span_ids por tipo + número (Roman-aware)."""
+    """Ordena children_span_ids por tipo + número (Roman-aware).
+
+    Notes:
+        Para ALI, a letra da alinea esta sempre no ultimo segmento do span_id
+        (ALI-005-a, ALI-005-II-a, ALI-005-1-II-a). O bug original assumia
+        parts[3] e quebrava para ALI-005-1-II-a (parts[3]='II').
+    """
     parts = span_id.split("-")
     prefix = parts[0] if parts else ""
     device_order = {"ART": 0, "INC": 1, "ALI": 2, "PAR": 3}.get(prefix, 9)
@@ -89,9 +95,14 @@ def _children_sort_key(span_id: str) -> tuple:
         if prefix == "PAR" and len(parts) >= 3:
             num = int(parts[2]) if parts[2] != "UNICO" else 0
         elif prefix == "INC" and len(parts) >= 3:
-            num = ROMAN_TO_INT.get(parts[2], 9999)
-        elif prefix == "ALI" and len(parts) >= 4:
-            num = ord(parts[3].lower()) - ord('a')
+            # Inciso: pode estar em parts[2] (INC-005-II) ou parts[3] (INC-005-1-II)
+            roman = parts[3] if len(parts) >= 4 else parts[2]
+            num = ROMAN_TO_INT.get(roman, 9999)
+        elif prefix == "ALI" and len(parts) >= 3:
+            # Alinea: letra sempre no ultimo segmento
+            letra = parts[-1]
+            if len(letra) == 1 and letra.isalpha():
+                num = ord(letra.lower()) - ord('a')
     except (ValueError, IndexError):
         pass
     return (device_order, num)
