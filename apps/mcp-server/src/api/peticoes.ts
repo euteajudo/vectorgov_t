@@ -89,11 +89,240 @@ async function readRecord(env: Env, id: string): Promise<PeticaoRecord | null> {
  * TODO: substituir pela invocação real do `PEVSEngine.executarFeature1(...)`
  * quando os agentes estiverem plugados no Worker.
  */
+function contratoNumero(metadata: Record<string, unknown>): string {
+  const raw = metadata.contrato_numero ?? metadata.contrato ?? "";
+  return String(raw).trim();
+}
+
+function envFlagEnabled(value: string | undefined): boolean {
+  if (!value) return false;
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}
+
+function citacaoMock(
+  id: string,
+  tipoFonte:
+    | "lei"
+    | "lei_complementar"
+    | "constituicao"
+    | "acordao_tcu"
+    | "outro",
+  norma: string,
+  artigo: string,
+  textoLiteral: string,
+  hashSeed: string,
+): Record<string, unknown> {
+  return {
+    id,
+    tipo_fonte: tipoFonte,
+    norma,
+    artigo,
+    texto_literal: textoLiteral,
+    hash: hashSeed.repeat(64).slice(0, 64),
+    status: "APROVADA",
+    fonte_url:
+      tipoFonte === "lei" || tipoFonte === "lei_complementar"
+        ? "https://www.planalto.gov.br/"
+        : null,
+  };
+}
+
+function citacoesBase(): Record<string, unknown>[] {
+  return [
+    citacaoMock(
+      "cit-001",
+      "lei",
+      "Lei nº 14.133/2021",
+      "art. 124, II, d",
+      "Art. 124, II, d, admite alteração contratual para restabelecer o equilíbrio econômico-financeiro inicial em hipóteses extraordinárias.",
+      "a1",
+    ),
+  ];
+}
+
+function calculoReequilibrio(
+  id: string,
+  descricao: string,
+  valorFinal: number,
+): Record<string, unknown> {
+  return {
+    id,
+    tipo: "reequilibrio_economico",
+    descricao,
+    inputs: {
+      valor_pleiteado: valorFinal,
+      percentual_reconhecido: 1,
+    },
+    memoria: [
+      {
+        descricao: "Valor base considerado a partir da documentação do pedido",
+        valor: valorFinal,
+        unidade: "BRL",
+      },
+      {
+        descricao: "Percentual juridicamente reconhecido após análise do fato superveniente",
+        valor: 1,
+        unidade: "fator",
+        formula: "valor_base * percentual_reconhecido",
+      },
+    ],
+    valor_final: valorFinal,
+    unidade_final: "BRL",
+    sucesso: true,
+    placeholder: true,
+  };
+}
+
+function pontoBloqueante(descricao: string): Record<string, unknown> {
+  return {
+    descricao,
+    severidade: "bloqueante",
+    responsavel: "requerente",
+  };
+}
+
+function analiseMockPorContrato(
+  contrato: string,
+): {
+  veredito:
+    | "procedente"
+    | "parcialmente_procedente"
+    | "improcedente"
+    | "inconclusiva";
+  fundamentacao: string;
+  citacoes: Record<string, unknown>[];
+  calculos: Record<string, unknown>[];
+  score_confianca: number;
+  pontos_a_complementar: Record<string, unknown>[];
+} | null {
+  switch (contrato) {
+    case "012/2024":
+      return {
+        veredito: "procedente",
+        fundamentacao:
+          "O pedido do Contrato 012/2024 deve ser reconhecido como procedente porque descreve mudança normativa tributária superveniente, com documentação mínima de memória de cálculo, notas fiscais comparativas e cronograma físico-financeiro. A alteração do regime IBS/CBS, associada à EC 132/2023 e à Lei Complementar 214/2025, configura fato do príncipe com impacto direto sobre prestações futuras ainda não executadas. A recomposição deve se limitar ao saldo contratual afetado, preservando a equação econômico-financeira original sem remunerar parcelas já executadas antes da vigência do novo regime.",
+        citacoes: [
+          ...citacoesBase(),
+          citacaoMock(
+            "cit-002",
+            "lei_complementar",
+            "Lei Complementar 214/2025",
+            "Disposições gerais IBS/CBS",
+            "A Lei Complementar 214/2025 disciplina aspectos gerais do IBS e da CBS no regime tributário pós-reforma.",
+            "b2",
+          ),
+          citacaoMock(
+            "cit-003",
+            "constituicao",
+            "Constituição Federal",
+            "art. 195, V (EC 132/2023)",
+            "A Constituição Federal, com redação da EC 132/2023, prevê contribuição sobre bens e serviços no art. 195, V.",
+            "c3",
+          ),
+        ],
+        calculos: [
+          calculoReequilibrio(
+            "calc-001",
+            "Cálculo placeholder do delta tributário IBS/CBS aplicável apenas ao saldo futuro do contrato.",
+            125000,
+          ),
+        ],
+        score_confianca: 0.88,
+        pontos_a_complementar: [],
+      };
+    case "045/2023":
+      return {
+        veredito: "improcedente",
+        fundamentacao:
+          "O pedido do Contrato 045/2023 deve ser indeferido. A narrativa descreve aumento ordinário de combustíveis, salários e manutenção, riscos normais da atividade econômica que não bastam para caracterizar álea extraordinária ou fato imprevisível. Também há fragilidade formal relevante: a petição invoca regime revogado da Lei 8.666/1993, não apresenta memória de cálculo auditável nem anexos mínimos que demonstrem nexo causal específico entre evento superveniente e desequilíbrio. A Lei nº 14.133/2021 permite recomposição em hipóteses excepcionais, mas não transforma variação comum de mercado em reequilíbrio automático.",
+        citacoes: citacoesBase(),
+        calculos: [],
+        score_confianca: 0.78,
+        pontos_a_complementar: [
+          {
+            descricao:
+              "Pedido sem memória de cálculo ou anexos suficientes; a deficiência reforça o indeferimento no mérito apresentado.",
+            severidade: "alta",
+            responsavel: "requerente",
+          },
+        ],
+      };
+    case "007/2024":
+      return {
+        veredito: "inconclusiva",
+        fundamentacao:
+          "A análise do Contrato 007/2024 é inconclusiva porque a petição apresenta fundamento legal plausível, mas não traz valor pleiteado, memória de cálculo, comprovação da variação cambial nem demonstração do impacto financeiro sobre itens contratuais específicos. Sem esses elementos, não há base técnica para deferir, indeferir ou quantificar o pedido. O encaminhamento juridicamente adequado é intimar o contratado para complementar a instrução, com indicação objetiva dos documentos faltantes e prazo definido, preservando posterior análise de mérito quando houver documentação verificável.",
+        citacoes: citacoesBase(),
+        calculos: [],
+        score_confianca: 0.42,
+        pontos_a_complementar: [
+          pontoBloqueante(
+            "Apresentar memória de cálculo, valor pleiteado e comprovantes da variação cambial com impacto direto nos custos do contrato.",
+          ),
+        ],
+      };
+    case "089/2024":
+      return {
+        veredito: "parcialmente_procedente",
+        fundamentacao:
+          "O pedido do Contrato 089/2024 é parcialmente procedente. A petição demonstra fato superveniente relacionado ao aumento de insumos especializados e apresenta anexos mínimos, o que permite reconhecer a tese de recomposição em abstrato. Contudo, a metodologia do contratado é inconsistente: usa índice geral IPCA para custos setoriais de insumos e ainda contém divergência interna entre o total de R$ 18.000,00 e o valor pleiteado de R$ 87.450,00. O deferimento deve ficar condicionado a recálculo técnico com índice setorial aderente, memória coerente e limitação ao impacto efetivamente comprovado.",
+        citacoes: citacoesBase(),
+        calculos: [
+          calculoReequilibrio(
+            "calc-001",
+            "Recálculo placeholder com glosa metodológica do índice geral usado pelo contratado.",
+            18000,
+          ),
+        ],
+        score_confianca: 0.72,
+        pontos_a_complementar: [
+          {
+            descricao:
+              "Substituir o índice geral por índice setorial e reconciliar a divergência entre os totais informados.",
+            severidade: "media",
+            responsavel: "requerente",
+          },
+        ],
+      };
+    case "156/2025":
+      return {
+        veredito: "inconclusiva",
+        fundamentacao:
+          "A análise do Contrato 156/2025 deve permanecer inconclusiva. Há elementos favoráveis ao contratado, pois a orientação técnica da ANPD pode ter introduzido requisitos operacionais não previstos originalmente; ao mesmo tempo, há elementos contrários, pois a LGPD já existia antes da assinatura e orientações infralegais podem integrar risco regulatório ordinário do fornecedor. Como não há consenso jurídico suficiente, e a decisão depende de enquadramento institucional sobre o peso normativo da orientação técnica, o caso deve ser submetido à Procuradoria ou autoridade competente, sem inventar precedente ou jurisprudência para encerrar a controvérsia.",
+        citacoes: citacoesBase(),
+        calculos: [],
+        score_confianca: 0.56,
+        pontos_a_complementar: [
+          pontoBloqueante(
+            "Submeter a controvérsia jurídica sobre orientação infralegal da ANPD à decisão humana qualificada ou à Procuradoria.",
+          ),
+        ],
+      };
+    default:
+      return null;
+  }
+}
+
 function gerarAnaliseMock(
   peticaoId: string,
   metadata: Record<string, unknown>,
+  env?: Pick<Env, "ENABLE_GOLDEN_SET_MOCKS">,
 ): unknown {
   const agora = new Date().toISOString();
+  const goldenSetAnalise = envFlagEnabled(env?.ENABLE_GOLDEN_SET_MOCKS)
+    ? analiseMockPorContrato(contratoNumero(metadata))
+    : null;
+  if (goldenSetAnalise !== null) {
+    return {
+      id: newPeticaoId(),
+      peticao_id: peticaoId,
+      ...goldenSetAnalise,
+      gerado_em: agora,
+      modelo_auditor: "gemini-3-pro",
+      metadata_origem: metadata,
+    };
+  }
+
   return {
     id: newPeticaoId(),
     peticao_id: peticaoId,
@@ -337,7 +566,7 @@ async function simularPipeline(
         fase: "done",
         progresso_pct: 100,
         atualizado_em: new Date().toISOString(),
-        analise: gerarAnaliseMock(record.id, record.metadata),
+        analise: gerarAnaliseMock(record.id, record.metadata, env),
       };
       await writeRecord(env, final);
     })(),
@@ -529,3 +758,5 @@ export async function handleGetParecer(
 
   return jsonResponse(record.parecer);
 }
+
+export const __internal = { gerarAnaliseMock };

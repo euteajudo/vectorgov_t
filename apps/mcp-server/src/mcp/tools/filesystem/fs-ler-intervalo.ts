@@ -1,13 +1,9 @@
 /**
- * Tool MCP: `fs_ler_intervalo`
+ * Tool MCP: `fs_ler_intervalo`.
  *
- * Lê em paralelo um intervalo de artigos `[artigo_inicio, artigo_fim]` de
- * uma norma. Limite duro de 20 artigos por chamada (proteção contra
- * estouros de contexto e de subrequest budget do Worker).
- *
- * Para cada artigo tenta R2 primeiro, depois D1 (mesma estratégia do
- * `fs_ler_dispositivo`). Falhas individuais não abortam o lote — o item
- * é simplesmente omitido e `truncado=true` sinaliza que houve perda.
+ * Le artigos raiz em intervalo [artigo_inicio, artigo_fim]. Para cada artigo,
+ * resolve a versao vigente no D1 e tenta carregar o Markdown em R2 pela chave
+ * `r2_path_versao` gravada pelo pipeline.
  */
 
 import type { Env } from "../../../env.js";
@@ -18,22 +14,15 @@ import {
 } from "@vectorgov-t/schemas";
 import { ToolValidationError, type ToolDescriptor } from "../types.js";
 import { zodToMcpSchema } from "../json-schema.js";
-import { buildHierarquiaPath, buildR2Path } from "../../../lib/citation.js";
 
-/** Limite duro do intervalo. */
 const MAX_INTERVAL = 20;
-
-interface R2Payload {
-  texto: string;
-  norma_label?: string;
-  hierarquia_path?: string;
-}
 
 interface D1ArtigoRow {
   texto: string;
+  r2_path_versao: string | null;
   norma_id: string;
   artigo: number | null;
-  paragrafo: number | null;
+  paragrafo: number | string | null;
   inciso: string | null;
   alinea: string | null;
   hierarquia_path: string;
@@ -46,36 +35,26 @@ interface DispositivoResolvido {
   fonte: "r2" | "d1";
 }
 
-async function tryR2(env: Env, norma: string, artigo: number): Promise<DispositivoResolvido | null> {
-  const ref = { norma_id: norma, artigo, paragrafo: null, inciso: null, alinea: null };
-  const key = buildR2Path(ref);
-  const obj = await env.R2_LEIS.get(key);
-  if (!obj) return null;
-  try {
-    const data = (await obj.json()) as R2Payload;
-    if (!data?.texto) return null;
-    return {
-      citacao: {
-        norma_id: norma,
-        norma_label: data.norma_label ?? norma,
-        artigo,
-        paragrafo: null,
-        inciso: null,
-        alinea: null,
-        hierarquia_path: data.hierarquia_path ?? buildHierarquiaPath(ref),
-      },
-      texto: data.texto,
-      fonte: "r2",
-    };
-  } catch {
-    return null;
-  }
+function markdownBody(raw: string): string {
+  const normalized = raw.replace(/\r\n?/g, "\n");
+  if (!normalized.startsWith("---\n")) return normalized;
+  const end = normalized.indexOf("\n---", 4);
+  if (end === -1) return normalized;
+  return normalized.slice(end + 4).replace(/^\n+/, "");
 }
 
-async function tryD1(env: Env, norma: string, artigo: number): Promise<DispositivoResolvido | null> {
+async function readTextFromR2(env: Env, key: string | null): Promise<string | null> {
+  if (!key) return null;
+  const obj = await env.R2_LEIS.get(key);
+  if (!obj) return null;
+  return markdownBody(await obj.text());
+}
+
+async function tryD1(env: Env, norma: string, artigo: number): Promise<D1ArtigoRow | null> {
   const sql = `
     SELECT
       v.texto,
+      v.r2_path_versao,
       d.norma_id,
       d.artigo,
       d.paragrafo,
@@ -95,8 +74,17 @@ async function tryD1(env: Env, norma: string, artigo: number): Promise<Dispositi
     ORDER BY v.data_inicio DESC
     LIMIT 1
   `;
-  const row = await env.DB.prepare(sql).bind(norma, artigo).first<D1ArtigoRow>();
+  return env.DB.prepare(sql).bind(norma, artigo).first<D1ArtigoRow>();
+}
+
+async function resolveArtigo(
+  env: Env,
+  norma: string,
+  artigo: number,
+): Promise<DispositivoResolvido | null> {
+  const row = await tryD1(env, norma, artigo);
   if (!row) return null;
+  const r2Text = await readTextFromR2(env, row.r2_path_versao);
   return {
     citacao: {
       norma_id: row.norma_id,
@@ -107,8 +95,8 @@ async function tryD1(env: Env, norma: string, artigo: number): Promise<Dispositi
       alinea: row.alinea,
       hierarquia_path: row.hierarquia_path,
     },
-    texto: row.texto,
-    fonte: "d1",
+    texto: r2Text ?? row.texto,
+    fonte: r2Text ? "r2" : "d1",
   };
 }
 
@@ -116,7 +104,7 @@ async function handler(args: unknown, env: Env): Promise<FsLerIntervaloOutputT> 
   const parsed = FsLerIntervaloInput.safeParse(args);
   if (!parsed.success) {
     throw new ToolValidationError(
-      "fs_ler_intervalo: argumentos inválidos",
+      "fs_ler_intervalo: argumentos invalidos",
       parsed.error.flatten(),
     );
   }
@@ -135,13 +123,8 @@ async function handler(args: unknown, env: Env): Promise<FsLerIntervaloOutputT> 
   for (let i = input.artigo_inicio; i <= limite; i++) artigos.push(i);
 
   const results = await Promise.all(
-    artigos.map(async (n) => {
-      const fromR2 = await tryR2(env, input.norma_id, n);
-      if (fromR2) return fromR2;
-      return tryD1(env, input.norma_id, n);
-    }),
+    artigos.map((n) => resolveArtigo(env, input.norma_id, n)),
   );
-
   const dispositivos = results.filter(
     (r): r is DispositivoResolvido => r !== null,
   );
@@ -157,8 +140,7 @@ async function handler(args: unknown, env: Env): Promise<FsLerIntervaloOutputT> 
 export const fsLerIntervaloTool: ToolDescriptor = {
   name: "fs_ler_intervalo",
   description:
-    "Lê em paralelo um intervalo de artigos [artigo_inicio, artigo_fim] de uma norma " +
-    "(R2 first com fallback D1). Máximo 20 artigos por chamada — excedente é truncado.",
+    "Le em paralelo um intervalo de artigos [artigo_inicio, artigo_fim]. Maximo 20 artigos por chamada.",
   inputSchema: zodToMcpSchema(FsLerIntervaloInput),
   handler: handler as (a: unknown, e: Env) => Promise<unknown>,
 };

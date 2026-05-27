@@ -1,17 +1,13 @@
 /**
- * Testes das 5 tools filesystem.
+ * Testes das tools filesystem.
  */
 
 import { describe, expect, it } from "vitest";
 import { findTool } from "../src/mcp/tools/index.js";
-import {
-  createTestEnv,
-  createFakeR2,
-  createFakeD1,
-} from "./_fakes.js";
+import { createFakeD1, createFakeR2, createTestEnv } from "./_fakes.js";
 
 describe("tool: fs_listar_normas", () => {
-  it("devolve normas do _index.json (R2) e marca fonte 'r2'", async () => {
+  it("devolve normas do _index.json (R2) e marca fonte r2", async () => {
     const env = createTestEnv({
       R2_LEIS: createFakeR2({
         "_index.json": {
@@ -21,7 +17,7 @@ describe("tool: fs_listar_normas", () => {
               tipo: "lei",
               numero: "14133",
               ano: 2021,
-              ementa: "Lei de licitações",
+              ementa: "Lei de licitacoes",
               r2_path: "lei-14133-2021/",
             },
           ],
@@ -39,7 +35,7 @@ describe("tool: fs_listar_normas", () => {
     expect(out.normas[0]!.tipo).toBe("lei");
   });
 
-  it("segunda chamada lê do cache KV", async () => {
+  it("segunda chamada le do cache KV", async () => {
     const env = createTestEnv({
       R2_LEIS: createFakeR2({
         "_index.json": { normas: [] },
@@ -56,20 +52,36 @@ describe("tool: fs_listar_normas", () => {
       R2_LEIS: createFakeR2({
         "_index.json": {
           normas: [
-            { norma_id: "x", tipo: "lei", numero: "1", ano: 2020, ementa: null, r2_path: "x/" },
-            { norma_id: "y", tipo: "decreto", numero: "2", ano: 2021, ementa: null, r2_path: "y/" },
+            {
+              norma_id: "x",
+              tipo: "lei",
+              numero: "1",
+              ano: 2020,
+              ementa: null,
+              r2_path: "x/",
+            },
+            {
+              norma_id: "y",
+              tipo: "decreto",
+              numero: "2",
+              ano: 2021,
+              ementa: null,
+              r2_path: "y/",
+            },
           ],
         },
       }),
     });
     const tool = findTool("fs_listar_normas")!;
-    const out = (await tool.handler({ tipo: "decreto" }, env)) as { total: number };
+    const out = (await tool.handler({ tipo: "decreto" }, env)) as {
+      total: number;
+    };
     expect(out.total).toBe(1);
   });
 });
 
 describe("tool: fs_listar_estrutura", () => {
-  it("lê _sumario.json e devolve estrutura", async () => {
+  it("le _sumario.json no formato novo e devolve estrutura", async () => {
     const env = createTestEnv({
       R2_LEIS: createFakeR2({
         "lei-x/_sumario.json": {
@@ -77,11 +89,23 @@ describe("tool: fs_listar_estrutura", () => {
             {
               tipo: "titulo",
               numero: "I",
-              titulo: "Disposições gerais",
+              titulo: "Disposicoes gerais",
               caminho: "tit1",
               filhos: [
-                { tipo: "artigo", numero: "1", titulo: null, caminho: "art1", filhos: [] },
-                { tipo: "artigo", numero: "2", titulo: null, caminho: "art2", filhos: [] },
+                {
+                  tipo: "artigo",
+                  numero: "1",
+                  titulo: null,
+                  caminho: "art1",
+                  filhos: [],
+                },
+                {
+                  tipo: "artigo",
+                  numero: "2",
+                  titulo: null,
+                  caminho: "art2",
+                  filhos: [],
+                },
               ],
             },
           ],
@@ -98,35 +122,81 @@ describe("tool: fs_listar_estrutura", () => {
     expect(out.estrutura).toHaveLength(1);
   });
 
-  it("falha (ToolValidationError) quando sumário não existe", async () => {
+  it("normaliza _sumario.json bruto do parser", async () => {
+    const env = createTestEnv({
+      R2_LEIS: createFakeR2({
+        "lei-x/_sumario.json": {
+          artigos: {
+            "10": {
+              id: "lei-x-art-010",
+              titulo: "Contratacao direta",
+              filhos: {
+                paragrafos: {
+                  "1": { id: "lei-x-art-010-p-1" },
+                },
+              },
+            },
+          },
+        },
+      }),
+    });
+    const tool = findTool("fs_listar_estrutura")!;
+    const out = (await tool.handler({ norma_id: "lei-x" }, env)) as {
+      total_dispositivos: number;
+      estrutura: Array<{ tipo: string; filhos: unknown[] }>;
+    };
+    expect(out.total_dispositivos).toBe(2);
+    expect(out.estrutura[0]!.tipo).toBe("artigo");
+    expect(out.estrutura[0]!.filhos).toHaveLength(1);
+  });
+
+  it("falha quando sumario nao existe", async () => {
     const env = createTestEnv({ R2_LEIS: createFakeR2({}) });
     const tool = findTool("fs_listar_estrutura")!;
     await expect(tool.handler({ norma_id: "inexistente" }, env)).rejects.toThrow(
-      /não encontrado/,
+      /nao encontrado/,
     );
   });
 });
 
 describe("tool: fs_ler_dispositivo", () => {
-  it("R2 first — devolve texto do R2 quando existe", async () => {
+  it("resolve no D1 e devolve texto do Markdown R2 quando existe", async () => {
     const env = createTestEnv({
       R2_LEIS: createFakeR2({
-        "lei-z/art10.json": {
-          texto: "Texto do artigo 10",
-          norma_label: "Lei Z",
-        },
+        "lei-z/dispositivos/livro-i/art-010.md":
+          "---\nid: \"lei-z-art-010\"\n---\n\nTexto do artigo 10",
+      }),
+      DB: createFakeD1({
+        rules: [
+          {
+            match: "FROM dispositivos d",
+            rows: [
+              {
+                texto: "Conteudo via D1",
+                r2_path_versao: "lei-z/dispositivos/livro-i/art-010.md",
+                norma_id: "lei-z",
+                artigo: 10,
+                paragrafo: null,
+                inciso: null,
+                alinea: null,
+                hierarquia_path: "Livro I -> Art. 10",
+                norma_label: "Lei Z",
+              },
+            ],
+          },
+        ],
       }),
     });
     const tool = findTool("fs_ler_dispositivo")!;
-    const out = (await tool.handler(
-      { norma_id: "lei-z", artigo: 10 },
-      env,
-    )) as { texto: string; fonte: string };
+    const out = (await tool.handler({ norma_id: "lei-z", artigo: 10 }, env)) as {
+      texto: string;
+      fonte: string;
+    };
     expect(out.fonte).toBe("r2");
     expect(out.texto).toBe("Texto do artigo 10");
   });
 
-  it("fallback D1 quando R2 não tem o objeto", async () => {
+  it("cai para D1 quando o artefato R2 nao existe", async () => {
     const env = createTestEnv({
       R2_LEIS: createFakeR2({}),
       DB: createFakeD1({
@@ -135,7 +205,8 @@ describe("tool: fs_ler_dispositivo", () => {
             match: "FROM dispositivos d",
             rows: [
               {
-                texto: "Conteúdo via D1",
+                texto: "Conteudo via D1",
+                r2_path_versao: null,
                 norma_id: "lei-z",
                 artigo: 10,
                 paragrafo: null,
@@ -150,19 +221,40 @@ describe("tool: fs_ler_dispositivo", () => {
       }),
     });
     const tool = findTool("fs_ler_dispositivo")!;
-    const out = (await tool.handler(
-      { norma_id: "lei-z", artigo: 10 },
-      env,
-    )) as { texto: string; fonte: string };
+    const out = (await tool.handler({ norma_id: "lei-z", artigo: 10 }, env)) as {
+      texto: string;
+      fonte: string;
+    };
     expect(out.fonte).toBe("d1");
-    expect(out.texto).toBe("Conteúdo via D1");
+    expect(out.texto).toBe("Conteudo via D1");
   });
 
   it("trunca texto longo respeitando max_tokens", async () => {
-    const longo = "palavra ".repeat(3000); // ~3000 palavras, ~6000 tokens
+    const longo = "palavra ".repeat(3000);
     const env = createTestEnv({
       R2_LEIS: createFakeR2({
-        "lei-z/art10.json": { texto: longo },
+        "lei-z/dispositivos/livro-i/art-010.md":
+          `---\nid: "lei-z-art-010"\n---\n\n${longo}`,
+      }),
+      DB: createFakeD1({
+        rules: [
+          {
+            match: "FROM dispositivos d",
+            rows: [
+              {
+                texto: "fallback",
+                r2_path_versao: "lei-z/dispositivos/livro-i/art-010.md",
+                norma_id: "lei-z",
+                artigo: 10,
+                paragrafo: null,
+                inciso: null,
+                alinea: null,
+                hierarquia_path: "Livro I -> Art. 10",
+                norma_label: "Lei Z",
+              },
+            ],
+          },
+        ],
       }),
     });
     const tool = findTool("fs_ler_dispositivo")!;
@@ -176,21 +268,74 @@ describe("tool: fs_ler_dispositivo", () => {
 });
 
 describe("tool: fs_ler_intervalo", () => {
-  it("lê N artigos em paralelo e marca truncado quando > 20", async () => {
+  it("le N artigos em paralelo a partir de D1 + R2", async () => {
+    const rows = new Map<number, Record<string, unknown>>([
+      [
+        1,
+        {
+          texto: "fallback art1",
+          r2_path_versao: "lei-z/dispositivos/livro-i/art-001.md",
+          norma_id: "lei-z",
+          artigo: 1,
+          paragrafo: null,
+          inciso: null,
+          alinea: null,
+          hierarquia_path: "Livro I -> Art. 1",
+          norma_label: "Lei Z",
+        },
+      ],
+      [
+        2,
+        {
+          texto: "fallback art2",
+          r2_path_versao: "lei-z/dispositivos/livro-i/art-002.md",
+          norma_id: "lei-z",
+          artigo: 2,
+          paragrafo: null,
+          inciso: null,
+          alinea: null,
+          hierarquia_path: "Livro I -> Art. 2",
+          norma_label: "Lei Z",
+        },
+      ],
+    ]);
     const env = createTestEnv({
       R2_LEIS: createFakeR2({
-        "lei-z/art1.json": { texto: "art1" },
-        "lei-z/art2.json": { texto: "art2" },
+        "lei-z/dispositivos/livro-i/art-001.md":
+          "---\nid: \"lei-z-art-001\"\n---\n\nart1",
+        "lei-z/dispositivos/livro-i/art-002.md":
+          "---\nid: \"lei-z-art-002\"\n---\n\nart2",
       }),
-      DB: createFakeD1({ rules: [] }),
+      DB: {
+        prepare(_sql: string) {
+          let bound: unknown[] = [];
+          const stmt = {
+            bind(...args: unknown[]) {
+              bound = args;
+              return stmt;
+            },
+            async first() {
+              return rows.get(Number(bound[1])) ?? null;
+            },
+            async all() {
+              return { results: [] };
+            },
+            async run() {
+              return { success: true };
+            },
+          };
+          return stmt as unknown as D1PreparedStatement;
+        },
+      } as unknown as D1Database,
     });
     const tool = findTool("fs_ler_intervalo")!;
     const out = (await tool.handler(
       { norma_id: "lei-z", artigo_inicio: 1, artigo_fim: 2 },
       env,
-    )) as { dispositivos: unknown[]; truncado: boolean; total: number };
+    )) as { dispositivos: Array<{ texto: string }>; truncado: boolean; total: number };
     expect(out.total).toBe(2);
     expect(out.truncado).toBe(false);
+    expect(out.dispositivos.map((d) => d.texto)).toEqual(["art1", "art2"]);
   });
 
   it("rejeita intervalo invertido", async () => {
@@ -216,7 +361,7 @@ describe("tool: fs_ler_intervalo", () => {
 });
 
 describe("tool: fs_grep", () => {
-  it("modo FTS5 default — devolve rows com rank", async () => {
+  it("modo FTS5 default devolve rows com rank", async () => {
     const env = createTestEnv({
       DB: createFakeD1({
         rules: [
@@ -229,7 +374,7 @@ describe("tool: fs_grep", () => {
                 artigo: 1,
                 paragrafo: null,
                 hierarquia: "art1",
-                texto: "menção a contratação direta",
+                texto: "mencao a contratacao direta",
                 rank: -1.1,
                 norma_label: "Lei Y",
               },
@@ -239,10 +384,11 @@ describe("tool: fs_grep", () => {
       }),
     });
     const tool = findTool("fs_grep")!;
-    const out = (await tool.handler(
-      { padrao: "contratação" },
-      env,
-    )) as { modo: string; total: number; fonte: string };
+    const out = (await tool.handler({ padrao: "contratacao" }, env)) as {
+      modo: string;
+      total: number;
+      fonte: string;
+    };
     expect(out.modo).toBe("fts5");
     expect(out.total).toBe(1);
     expect(out.fonte).toBe("live");
@@ -261,19 +407,21 @@ describe("tool: fs_grep", () => {
     });
     const tool = findTool("fs_grep")!;
     await tool.handler({ padrao: "xpto" }, env);
-    const out2 = (await tool.handler({ padrao: "xpto" }, env)) as { fonte: string };
+    const out2 = (await tool.handler({ padrao: "xpto" }, env)) as {
+      fonte: string;
+    };
     expect(out2.fonte).toBe("cache");
   });
 
-  it("modo regex rejeita padrão catastrófico", async () => {
+  it("modo regex rejeita padrao catastrofico", async () => {
     const env = createTestEnv({ DB: createFakeD1({}) });
     const tool = findTool("fs_grep")!;
     await expect(
       tool.handler({ padrao: "(.*)+abc", regex: true }, env),
-    ).rejects.toThrow(/catastrófico/);
+    ).rejects.toThrow(/catastr/);
   });
 
-  it("modo regex aceita padrão simples e filtra in-memory", async () => {
+  it("modo regex aceita padrao simples e filtra em memoria", async () => {
     const env = createTestEnv({
       DB: createFakeD1({
         rules: [
@@ -304,10 +452,10 @@ describe("tool: fs_grep", () => {
       }),
     });
     const tool = findTool("fs_grep")!;
-    const out = (await tool.handler(
-      { padrao: "^abc", regex: true },
-      env,
-    )) as { modo: string; total: number };
+    const out = (await tool.handler({ padrao: "^abc", regex: true }, env)) as {
+      modo: string;
+      total: number;
+    };
     expect(out.modo).toBe("regex");
     expect(out.total).toBe(1);
   });

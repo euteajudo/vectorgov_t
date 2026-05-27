@@ -531,8 +531,8 @@ export function ParecerView({ peticaoId }: { peticaoId: string }) {
         <CardHeader>
           <CardTitle>Editor (markdown + preview)</CardTitle>
           <CardDescription>
-            Alterações ficam locais até "Salvar versão". Mude o texto à esquerda
-            e veja a renderização à direita.
+            Alterações ficam locais até &quot;Salvar versão&quot;. Mude o texto
+            à esquerda e veja a renderização à direita.
           </CardDescription>
         </CardHeader>
         <CardContent>

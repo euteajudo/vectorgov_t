@@ -31,6 +31,7 @@ const INDEX_R2_KEY = "_index.json";
 
 interface NormaEntry {
   norma_id: string;
+  id?: string;
   tipo: string;
   numero: string;
   ano: number;
@@ -79,9 +80,13 @@ async function handler(args: unknown, env: Env): Promise<FsListarNormasOutputT> 
     await cacheSet(env, INDEX_CACHE_KEY, idx, INDEX_CACHE_TTL);
   }
 
+  const normalizadas = idx.normas.map((n) => ({
+    ...n,
+    norma_id: n.norma_id ?? n.id ?? "",
+  }));
   const normas = input.tipo
-    ? idx.normas.filter((n) => n.tipo === input.tipo)
-    : idx.normas;
+    ? normalizadas.filter((n) => n.tipo === input.tipo)
+    : normalizadas;
 
   return {
     normas,

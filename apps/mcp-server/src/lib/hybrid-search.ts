@@ -102,7 +102,7 @@ interface Fts5Row {
   dispositivo_id: string;
   norma_id: string;
   artigo: number | null;
-  paragrafo: number | null;
+  paragrafo: number | string | null;
   hierarquia: string | null;
   texto: string;
   rank: number; // bm25() — quanto menor, mais relevante
@@ -137,8 +137,7 @@ async function queryVectorize(
   filtros: HybridFilters | undefined,
 ): Promise<VectorHit[]> {
   const filter: Record<string, unknown> = {};
-  if (filtros?.lei) filter.lei = filtros.lei;
-  if (filtros?.tema) filter.tema = filtros.tema;
+  if (filtros?.lei) filter.norma_id = filtros.lei;
   if (filtros?.tipo_dispositivo) filter.tipo_dispositivo = filtros.tipo_dispositivo;
 
   const queryOpts: VectorizeQueryOptions = {
@@ -204,7 +203,7 @@ async function queryFts5(
       f.texto AS texto,
       bm25(dispositivos_fts) AS rank
     FROM dispositivos_fts f
-    JOIN dispositivos d ON d.id = f.rowid
+    JOIN dispositivos d ON d.id = f.dispositivo_id
     WHERE ${whereParts.join(" AND ")}
     ORDER BY rank ASC
     LIMIT ${PER_RANKER_TOP_K}
@@ -275,7 +274,7 @@ async function rerank(
 function buildCitacao(opts: {
   norma_id: string;
   artigo?: number | null;
-  paragrafo?: number | null;
+  paragrafo?: number | string | null;
   inciso?: string | null;
   alinea?: string | null;
   hierarquia_path?: string | null;
@@ -335,7 +334,10 @@ export async function hybridSearch(
       const fts = ftsById.get(id);
       const vec = vecById.get(id);
       const texto =
-        fts?.texto ?? ((vec?.metadata?.texto as string | undefined) ?? "");
+        fts?.texto ??
+        ((vec?.metadata?.texto as string | undefined) ??
+          (vec?.metadata?.texto_preview as string | undefined) ??
+          "");
       const meta = vec?.metadata ?? {};
       const norma_id = (fts?.norma_id ?? (meta.norma_id as string) ?? "") + "";
       const artigo = fts?.artigo ?? (meta.artigo as number | null) ?? null;
@@ -346,7 +348,11 @@ export async function hybridSearch(
         paragrafo,
         inciso: (meta.inciso as string | undefined) ?? null,
         alinea: (meta.alinea as string | undefined) ?? null,
-        hierarquia_path: fts?.hierarquia ?? (meta.hierarquia_path as string) ?? "",
+        hierarquia_path:
+          fts?.hierarquia ??
+          (meta.hierarquia_path as string | undefined) ??
+          (meta.hierarquia as string | undefined) ??
+          "",
         norma_label: (meta.norma_label as string) ?? undefined,
       });
       return {

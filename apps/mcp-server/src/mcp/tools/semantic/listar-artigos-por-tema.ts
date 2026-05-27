@@ -56,14 +56,18 @@ async function handler(
     );
   }
 
-  const filter: Record<string, unknown> = { tema: input.tema };
-  if (input.lei) filter.lei = input.lei;
+  const filter: Record<string, unknown> = {};
+  if (input.lei) filter.norma_id = input.lei;
 
-  const res = await env.VECTORIZE.query(vec, {
+  const queryOpts: VectorizeQueryOptions = {
     topK: input.top_k,
     returnMetadata: "all",
-    filter: filter as VectorizeVectorMetadataFilter,
-  });
+  };
+  if (Object.keys(filter).length > 0) {
+    queryOpts.filter = filter as VectorizeVectorMetadataFilter;
+  }
+
+  const res = await env.VECTORIZE.query(vec, queryOpts);
 
   const artigos = (res.matches ?? []).map((m) => {
     const meta = (m.metadata ?? {}) as Record<string, unknown>;
@@ -73,13 +77,20 @@ async function handler(
         norma_id,
         norma_label: (meta.norma_label as string) ?? norma_id,
         artigo: (meta.artigo as number | null) ?? null,
-        paragrafo: (meta.paragrafo as number | null) ?? null,
+        paragrafo: (meta.paragrafo as number | string | null) ?? null,
         inciso: (meta.inciso as string | null) ?? null,
         alinea: (meta.alinea as string | null) ?? null,
-        hierarquia_path: (meta.hierarquia_path as string) ?? "",
+        hierarquia_path:
+          (meta.hierarquia_path as string | undefined) ??
+          (meta.hierarquia as string | undefined) ??
+          "",
       },
       score: m.score,
-      preview: preview((meta.texto as string) ?? ""),
+      preview: preview(
+        ((meta.texto as string | undefined) ??
+          (meta.texto_preview as string | undefined) ??
+          ""),
+      ),
     };
   });
 

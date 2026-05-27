@@ -621,8 +621,8 @@ export function createFakeD1(opts: FakeD1Options = {}): FakeD1Database {
       return;
     }
     if (s.startsWith("INSERT INTO dispositivos_fts")) {
-      const [norma_id, artigo, paragrafo, hierarquia, texto] = binds;
-      state.fts.push({ norma_id, artigo, paragrafo, hierarquia, texto });
+      const [dispositivo_id, norma_id, artigo, paragrafo, hierarquia, texto] = binds;
+      state.fts.push({ dispositivo_id, norma_id, artigo, paragrafo, hierarquia, texto });
       return;
     }
     if (s.startsWith("DELETE FROM versoes_dispositivos WHERE")) {

@@ -65,7 +65,7 @@ export const HistoricoQuerySchema = z.object({
       "procedente",
       "parcialmente_procedente",
       "improcedente",
-      "inconclusivo",
+      "inconclusiva",
     ])
     .optional(),
   data_inicio: z

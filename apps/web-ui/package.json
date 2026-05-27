@@ -9,8 +9,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "lint": "next lint",
+    "test": "vitest run --passWithNoTests",
+    "lint": "eslint .",
     "pages:build": "opennextjs-cloudflare build",
     "pages:deploy": "opennextjs-cloudflare deploy",
     "pages:preview": "opennextjs-cloudflare preview"
@@ -34,12 +34,15 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.5",
     "@opennextjs/cloudflare": "^1.19.11",
     "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "autoprefixer": "^10.4.0",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^15.5.18",
     "postcss": "^8.5.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0",

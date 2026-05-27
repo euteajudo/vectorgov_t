@@ -34,7 +34,7 @@ interface Fts5Row {
   dispositivo_id: string;
   norma_id: string;
   artigo: number | null;
-  paragrafo: number | null;
+  paragrafo: number | string | null;
   hierarquia: string;
   texto: string;
   rank: number;
@@ -45,7 +45,7 @@ interface DispRow {
   dispositivo_id: string;
   norma_id: string;
   artigo: number | null;
-  paragrafo: number | null;
+  paragrafo: number | string | null;
   hierarquia: string;
   texto: string;
   norma_label: string | null;
@@ -97,7 +97,7 @@ async function grepFts5(
       bm25(dispositivos_fts) AS rank,
       n.ementa AS norma_label
     FROM dispositivos_fts f
-    JOIN dispositivos d ON d.id = f.rowid
+    JOIN dispositivos d ON d.id = f.dispositivo_id
     LEFT JOIN normas n ON n.id = d.norma_id
     WHERE ${whereParts.join(" AND ")}
     ORDER BY rank ASC

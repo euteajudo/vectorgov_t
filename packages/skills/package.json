@@ -4,8 +4,8 @@
   "private": true,
   "description": "Skills em markdown — source of truth (sincronizadas com R2)",
   "scripts": {
-    "sync:upload": "node ../../scripts/sync-skills-to-r2.mjs",
-    "sync:download": "node ../../scripts/sync-skills-from-r2.mjs",
+    "sync:upload": "node ../../scripts/upload-skills-to-r2.mjs",
+    "sync:download": "node ../../scripts/download-skills-from-r2.mjs",
     "validate": "node ../../scripts/validate-skills.mjs"
   }
 }

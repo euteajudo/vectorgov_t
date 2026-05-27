@@ -134,6 +134,12 @@ function mockContainerFetch(
   };
 }
 
+function readR2Text(env: ReturnType<typeof createPipelineEnv>, key: string): string {
+  const obj = env.R2_LEIS.store.get(key);
+  expect(obj).toBeTruthy();
+  return new TextDecoder().decode(obj!.body);
+}
+
 describe("runIngestionPipeline — fluxo feliz", () => {
   let fetchSpy: { restore: () => void } | null = null;
   afterEach(() => {
@@ -178,6 +184,11 @@ describe("runIngestionPipeline — fluxo feliz", () => {
     expect(env.DB.state.dispositivos.size).toBe(3);
     expect(env.DB.state.versoes).toHaveLength(3);
     expect(env.DB.state.fts).toHaveLength(3);
+    expect(env.DB.state.fts[0]).toMatchObject({
+      dispositivo_id: "lc-test-2025-art-001",
+      norma_id: "lc-test-2025",
+      artigo: 1,
+    });
 
     // R2: 3 .md + meta + sumario + canonical + index global
     const keys = Array.from(env.R2_LEIS.store.keys());
@@ -189,9 +200,30 @@ describe("runIngestionPipeline — fluxo feliz", () => {
     expect(keys).toContain("lc-test-2025/_canonical.txt");
     expect(keys).toContain("_index.json");
 
+    const sumario = JSON.parse(readR2Text(env, "lc-test-2025/_sumario.json")) as {
+      estrutura: unknown[];
+      total_dispositivos: number;
+    };
+    expect(Array.isArray(sumario.estrutura)).toBe(true);
+    expect(sumario.total_dispositivos).toBe(3);
+
+    const indice = JSON.parse(readR2Text(env, "_index.json")) as {
+      normas: Array<Record<string, unknown>>;
+    };
+    expect(indice.normas[0]).toMatchObject({
+      norma_id: "lc-test-2025",
+      tipo: "lei_complementar",
+    });
+
     // Vectorize: 3 vetores
     expect(env.VECTORIZE.vectors.size).toBe(3);
     expect(env.VECTORIZE.upsertCount).toBeGreaterThanOrEqual(1);
+    expect(env.VECTORIZE.vectors.get("lc-test-2025-art-001")?.metadata).toMatchObject({
+      norma_id: "lc-test-2025",
+      lei: "lc-test-2025",
+      hierarquia_path: expect.stringContaining("Art. 1"),
+      texto: expect.stringContaining("Texto do artigo 1"),
+    });
 
     // AI: 1 chamada (3 textos cabem num batch)
     expect(env.AI.callCount).toBe(1);

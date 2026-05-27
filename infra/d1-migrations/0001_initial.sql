@@ -16,7 +16,7 @@ CREATE TABLE dispositivos (
     id TEXT PRIMARY KEY,
     norma_id TEXT NOT NULL REFERENCES normas(id),
     artigo INTEGER,
-    paragrafo INTEGER,
+    paragrafo TEXT,
     inciso TEXT,
     alinea TEXT,
     hierarquia_path TEXT,
@@ -47,6 +47,7 @@ CREATE INDEX idx_relacoes_destino ON relacoes(destino_id, tipo);
 
 -- FTS5 para busca lexical com BM25
 CREATE VIRTUAL TABLE dispositivos_fts USING fts5(
+    dispositivo_id UNINDEXED,
     norma_id UNINDEXED,
     artigo UNINDEXED,
     paragrafo UNINDEXED,

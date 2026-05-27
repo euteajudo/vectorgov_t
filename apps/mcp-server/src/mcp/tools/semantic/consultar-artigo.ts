@@ -1,11 +1,10 @@
 /**
- * Tool MCP: `consultar_artigo`
+ * Tool MCP: `consultar_artigo`.
  *
- * Lookup direto de um dispositivo pela tripla (norma, artigo, [paragrafo,
- * inciso, alinea]). Não usa embedding nem FTS — query SQL pura sobre D1.
- *
- * Quando usar: o agente já sabe o artigo exato ("Art. 5º da CF") e quer
- * o texto vigente sem custo de embedding.
+ * Lookup direto de um dispositivo pela norma, artigo e niveis opcionais.
+ * Usa campos estruturados do D1, nao `hierarquia_path`, porque o parser grava
+ * um caminho legivel enquanto as chamadas da tool recebem referencias
+ * canonicas simples.
  */
 
 import type { Env } from "../../../env.js";
@@ -13,18 +12,15 @@ import {
   ConsultarArtigoInput,
   type ConsultarArtigoOutputT,
 } from "@vectorgov-t/schemas";
-import { buildHierarquiaPath, buildDispositivoId } from "../../../lib/citation.js";
+import { buildDispositivoId } from "../../../lib/citation.js";
 import { ToolValidationError, type ToolDescriptor } from "../types.js";
 import { zodToMcpSchema } from "../json-schema.js";
 
-/**
- * Estrutura crua devolvida pelo D1 ao juntar `dispositivos` + versão vigente.
- */
 interface DispositivoRow {
   dispositivo_id: string;
   norma_id: string;
   artigo: number | null;
-  paragrafo: number | null;
+  paragrafo: number | string | null;
   inciso: string | null;
   alinea: string | null;
   hierarquia_path: string;
@@ -35,27 +31,36 @@ interface DispositivoRow {
   norma_label: string | null;
 }
 
+function addOptionalField(
+  whereParts: string[],
+  bind: unknown[],
+  column: string,
+  value: string | number | undefined,
+): void {
+  if (value === undefined) {
+    whereParts.push(`${column} IS NULL`);
+    return;
+  }
+  whereParts.push(`${column} = ?`);
+  bind.push(String(value));
+}
+
 async function handler(args: unknown, env: Env): Promise<ConsultarArtigoOutputT> {
   const parsed = ConsultarArtigoInput.safeParse(args);
   if (!parsed.success) {
     throw new ToolValidationError(
-      "consultar_artigo: argumentos inválidos",
+      "consultar_artigo: argumentos invalidos",
       parsed.error.flatten(),
     );
   }
   const input = parsed.data;
 
-  // Constrói o hierarquia_path canônico para a busca exata.
-  const hierarquia = buildHierarquiaPath({
-    norma_id: input.norma_id,
-    artigo: input.artigo,
-    paragrafo: input.paragrafo ?? null,
-    inciso: input.inciso ?? null,
-    alinea: input.alinea ?? null,
-  });
+  const whereParts = ["d.norma_id = ?", "d.artigo = ?", "v.data_fim IS NULL"];
+  const bind: unknown[] = [input.norma_id, input.artigo];
+  addOptionalField(whereParts, bind, "d.paragrafo", input.paragrafo);
+  addOptionalField(whereParts, bind, "d.inciso", input.inciso);
+  addOptionalField(whereParts, bind, "d.alinea", input.alinea);
 
-  // Versão vigente: data_fim IS NULL ordenado por data_inicio DESC.
-  // JOIN com normas só para pegar `ementa` (usado como label legível).
   const sql = `
     SELECT
       d.id AS dispositivo_id,
@@ -73,22 +78,15 @@ async function handler(args: unknown, env: Env): Promise<ConsultarArtigoOutputT>
     FROM dispositivos d
     JOIN versoes_dispositivos v ON v.dispositivo_id = d.id
     LEFT JOIN normas n ON n.id = d.norma_id
-    WHERE d.norma_id = ?
-      AND d.hierarquia_path = ?
-      AND v.data_fim IS NULL
+    WHERE ${whereParts.join(" AND ")}
     ORDER BY v.data_inicio DESC
     LIMIT 1
   `;
 
-  const row = await env.DB
-    .prepare(sql)
-    .bind(input.norma_id, hierarquia)
-    .first<DispositivoRow>();
+  const row = await env.DB.prepare(sql).bind(...bind).first<DispositivoRow>();
 
   if (!row) {
-    return {
-      encontrado: false,
-    };
+    return { encontrado: false };
   }
 
   return {
@@ -114,12 +112,10 @@ async function handler(args: unknown, env: Env): Promise<ConsultarArtigoOutputT>
 export const consultarArtigoTool: ToolDescriptor = {
   name: "consultar_artigo",
   description:
-    "Lookup direto de um dispositivo (norma + artigo + opcional parágrafo/inciso/alínea). " +
-    "Devolve o texto da versão vigente — sem embedding, custo mínimo. " +
-    "Use quando o agente já conhece a referência exata.",
+    "Lookup direto de um dispositivo (norma + artigo + opcional paragrafo/inciso/alinea). " +
+    "Devolve o texto da versao vigente sem embedding.",
   inputSchema: zodToMcpSchema(ConsultarArtigoInput),
   handler: handler as (a: unknown, e: Env) => Promise<unknown>,
 };
 
-// Export interno usado em testes para verificar a chave canônica gerada.
 export const __internal = { buildDispositivoId };

@@ -69,7 +69,7 @@ function formatBytes(b: number): string {
   return `${(b / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-interface FormState extends PeticaoMetadata {}
+type FormState = PeticaoMetadata;
 
 const ESTADO_INICIAL: FormState = {
   contrato: "",
@@ -167,13 +167,6 @@ export function NovaPeticaoForm() {
   function removerArquivo() {
     setArquivo(null);
   }
-
-  // Estado de "processando" — quando já tem ID e fase != done/failed.
-  const processando =
-    !!peticaoId &&
-    statusQuery.data?.fase !== undefined &&
-    statusQuery.data.fase !== "done" &&
-    statusQuery.data.fase !== "failed";
 
   const concluido = statusQuery.data?.fase === "done";
   const falhou = statusQuery.data?.fase === "failed";

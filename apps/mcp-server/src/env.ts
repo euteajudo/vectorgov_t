@@ -46,4 +46,5 @@ export interface Env {
   // Secrets (não bindings)
   GOOGLE_API_KEY?: string;
   INGESTION_API_SECRET?: string;
+  ENABLE_GOLDEN_SET_MOCKS?: string;
 }

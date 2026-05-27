@@ -52,6 +52,7 @@ import {
   normaSumarioR2Key,
   renderDispositivoMd,
 } from "./markdown.js";
+import { sumarioToEstruturaFile } from "./sumario.js";
 
 /**
  * Tamanho dos sub-batches em todas as etapas que aceitam batch (embedding,
@@ -283,16 +284,24 @@ async function upsertVectorize(
     if (emb === undefined || key === undefined) {
       throw new Error(`upsertVectorize: dispositivo ${d.id} sem embedding/key`);
     }
+    const metadata: Record<string, VectorizeVectorMetadata> = {
+      norma_id: d.norma_id,
+      lei: d.norma_id,
+      tipo_dispositivo: d.tipo_dispositivo,
+      artigo: d.artigo ?? 0,
+      r2_key: key,
+      hierarquia: d.hierarquia_path,
+      hierarquia_path: d.hierarquia_path,
+      texto: d.texto.slice(0, 4000),
+    };
+    if (d.paragrafo) metadata.paragrafo = d.paragrafo;
+    if (d.inciso) metadata.inciso = d.inciso;
+    if (d.alinea) metadata.alinea = d.alinea;
+
     return {
       id: d.id,
       values: Array.from(emb),
-      metadata: {
-        norma_id: d.norma_id,
-        tipo_dispositivo: d.tipo_dispositivo,
-        artigo: d.artigo ?? 0,
-        r2_key: key,
-        hierarquia: d.hierarquia_path,
-      },
+      metadata,
     };
   });
 
@@ -352,12 +361,6 @@ async function insertD1(
       const r2Key = r2Keys[i + j];
       if (r2Key === undefined) continue;
 
-      // dispositivos.paragrafo é INTEGER na migration 0001, mas o parser
-      // devolve string ('1', '2', 'unico'). Convertemos quando possível;
-      // 'unico' vira null e fica registrado em hierarquia_path.
-      const paragrafoNum =
-        d.paragrafo && /^\d+$/.test(d.paragrafo) ? Number.parseInt(d.paragrafo, 10) : null;
-
       stmts.push(
         env.DB.prepare(
           "INSERT INTO dispositivos (id, norma_id, artigo, paragrafo, inciso, alinea, hierarquia_path, tipo_dispositivo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -365,7 +368,7 @@ async function insertD1(
           d.id,
           d.norma_id,
           d.artigo ?? null,
-          paragrafoNum,
+          d.paragrafo ?? null,
           d.inciso ?? null,
           d.alinea ?? null,
           d.hierarquia_path,
@@ -382,8 +385,9 @@ async function insertD1(
           r2Key,
         ),
         env.DB.prepare(
-          "INSERT INTO dispositivos_fts (norma_id, artigo, paragrafo, hierarquia, texto) VALUES (?, ?, ?, ?, ?)",
+          "INSERT INTO dispositivos_fts (dispositivo_id, norma_id, artigo, paragrafo, hierarquia, texto) VALUES (?, ?, ?, ?, ?, ?)",
         ).bind(
+          d.id,
           d.norma_id,
           d.artigo ?? null,
           d.paragrafo ?? null,
@@ -426,7 +430,7 @@ async function updateIndiceGlobal(env: Env, parse: ParseResult): Promise<void> {
   }
 
   const entry = {
-    id: parse.norma.id,
+    norma_id: parse.norma.id,
     tipo: parse.norma.tipo,
     numero: parse.norma.numero,
     ano: parse.norma.ano,
@@ -438,7 +442,7 @@ async function updateIndiceGlobal(env: Env, parse: ParseResult): Promise<void> {
   };
 
   indice.normas = indice.normas
-    .filter((n) => n.id !== parse.norma.id)
+    .filter((n) => (n.norma_id ?? n.id) !== parse.norma.id)
     .concat(entry);
   indice.atualizado_em = new Date().toISOString();
 
@@ -483,7 +487,11 @@ async function uploadNormaArtefatos(env: Env, parse: ParseResult): Promise<void>
       () =>
         env.R2_LEIS.put(
           normaSumarioR2Key(parse.norma.id),
-          JSON.stringify(parse.sumario ?? {}, null, 2),
+          JSON.stringify(
+            sumarioToEstruturaFile(parse.sumario ?? {}, parse.dispositivos.length),
+            null,
+            2,
+          ),
           {
             httpMetadata: { contentType: "application/json; charset=utf-8" },
           },

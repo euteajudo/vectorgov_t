@@ -19,9 +19,9 @@ caso-NN-<slug>/
 |---|---|---|---|
 | 01 | Reequilíbrio puro IBS/CBS (LC 214) | `procedente` | Detecção de mudança tributária pós-reforma |
 | 02 | Petição claramente improcedente | `improcedente` | Filtro de pedidos sem mérito |
-| 03 | Falta documento obrigatório | `inconclusivo` | Verificação de admissibilidade formal (memória de cálculo ausente) |
+| 03 | Falta documento obrigatório | `inconclusiva` | Verificação de admissibilidade formal (memória de cálculo ausente) |
 | 04 | Procedência parcial — cálculo errado | `parcialmente_procedente` | Auditor identifica erro no cálculo apresentado |
-| 05 | Caso ambíguo (decisão divergente) | `inconclusivo` | Limites do sistema; quando deve devolver ao humano |
+| 05 | Caso ambíguo (decisão divergente) | `inconclusiva` | Limites do sistema; quando deve devolver ao humano |
 
 ## Como rodar
 

@@ -12,7 +12,7 @@ A capacidade do sistema de **não tomar decisão de mérito** quando faltam elem
 ## Comportamento esperado
 
 ✅ Bom:
-- Veredito `inconclusivo`
+- Veredito `inconclusiva`
 - `score_confianca` baixo (≤ 0,50)
 - `pontos_a_complementar` lista 3+ itens documentais
 - Conclusão recomenda **devolver ao contratado** para suprir documentação

@@ -16,7 +16,7 @@ export interface DispositivoRef {
   norma_id: string;
   norma_label?: string;
   artigo: number | null;
-  paragrafo?: number | null;
+  paragrafo?: number | string | null;
   inciso?: string | null;
   alinea?: string | null;
 }

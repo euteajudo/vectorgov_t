@@ -11,7 +11,7 @@ A capacidade do sistema de **reconhecer suas limitações** e devolver decisões
 ## Comportamento esperado
 
 ✅ Bom:
-- Veredito `inconclusivo`
+- Veredito `inconclusiva`
 - `score_confianca` baixo a médio (0,40 – 0,70)
 - Análise apresenta os 2 lados da controvérsia com fundamentação
 - Recomenda **consulta à Procuradoria** ou decisão de autoridade superior

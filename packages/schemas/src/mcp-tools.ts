@@ -15,6 +15,11 @@
 
 import { z } from "zod";
 
+const ParagrafoRefSchema = z.union([
+  z.number().int().min(0),
+  z.string().trim().min(1),
+]);
+
 // ============================================================================
 // Tipos auxiliares — referenciados por várias tools
 // ============================================================================
@@ -29,7 +34,7 @@ export const CitacaoSchema = z.object({
   norma_id: z.string(),
   norma_label: z.string(),
   artigo: z.number().int().nullable().optional(),
-  paragrafo: z.number().int().nullable().optional(),
+  paragrafo: ParagrafoRefSchema.nullable().optional(),
   inciso: z.string().nullable().optional(),
   alinea: z.string().nullable().optional(),
   hierarquia_path: z.string(),
@@ -79,7 +84,7 @@ export type BuscarLegislacaoOutputT = z.infer<typeof BuscarLegislacaoOutput>;
 export const ConsultarArtigoInput = z.object({
   norma_id: z.string().min(1),
   artigo: z.number().int().min(1),
-  paragrafo: z.number().int().min(0).optional(),
+  paragrafo: ParagrafoRefSchema.optional(),
   inciso: z.string().optional(),
   alinea: z.string().optional(),
 });
@@ -231,7 +236,7 @@ export type FsListarEstruturaOutputT = z.infer<typeof FsListarEstruturaOutput>;
 export const FsLerDispositivoInput = z.object({
   norma_id: z.string().min(1),
   artigo: z.number().int().min(1),
-  paragrafo: z.number().int().min(0).optional(),
+  paragrafo: ParagrafoRefSchema.optional(),
   inciso: z.string().optional(),
   alinea: z.string().optional(),
   max_tokens: z.number().int().min(100).max(8000).default(4000),
