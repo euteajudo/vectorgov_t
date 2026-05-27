@@ -17,6 +17,11 @@
  */
 import type { Env } from "../env.js";
 import { errorResponse, jsonResponse } from "../lib/responses.js";
+import {
+  PeticaoUploadMetadataSchema,
+  validatePeticaoId,
+  zodErrorResponse,
+} from "./validation.js";
 
 /**
  * Tamanho máximo de PDF aceito (bytes). Igual ao endpoint de ingestão.
@@ -381,11 +386,18 @@ export async function handlePeticaoUpload(
   const metadataRaw = form.get("metadata");
   let metadata: Record<string, unknown> = {};
   if (typeof metadataRaw === "string" && metadataRaw.length > 0) {
+    let parsed: unknown;
     try {
-      metadata = JSON.parse(metadataRaw) as Record<string, unknown>;
+      parsed = JSON.parse(metadataRaw);
     } catch {
       return errorResponse("Campo 'metadata' deve ser JSON válido", 400);
     }
+    // Valida estrutura via Zod (follow-up P0 #53)
+    const result = PeticaoUploadMetadataSchema.safeParse(parsed);
+    if (!result.success) {
+      return zodErrorResponse(result.error, "metadata inválido");
+    }
+    metadata = result.data as Record<string, unknown>;
   }
 
   // TODO: persistir PDF em R2 (R2_LEIS bucket ou bucket dedicado a petições)
@@ -428,10 +440,11 @@ export async function handlePeticaoStatus(
   env: Env,
 ): Promise<Response> {
   const url = new URL(request.url);
-  const id = url.pathname.split("/").filter(Boolean).pop();
-  if (!id) {
-    return errorResponse("id da petição obrigatório", 400);
-  }
+  const rawId = url.pathname.split("/").filter(Boolean).pop();
+  // Validação Zod (follow-up P0 #53) — bloqueia path traversal e caracteres inválidos
+  const idCheck = validatePeticaoId(rawId);
+  if (!idCheck.ok) return idCheck.response;
+  const id = idCheck.data;
 
   const record = await readRecord(env, id);
   if (!record) {
@@ -462,10 +475,10 @@ export async function handleGerarParecer(
   const url = new URL(request.url);
   const parts = url.pathname.split("/").filter(Boolean);
   // Esperado: ["api", "peticoes", ":id", "parecer"]
-  const id = parts[parts.length - 2];
-  if (!id) {
-    return errorResponse("id da petição obrigatório", 400);
-  }
+  const rawId = parts[parts.length - 2];
+  const idCheck = validatePeticaoId(rawId);
+  if (!idCheck.ok) return idCheck.response;
+  const id = idCheck.data;
 
   const record = await readRecord(env, id);
   if (!record) {
@@ -501,10 +514,10 @@ export async function handleGetParecer(
 ): Promise<Response> {
   const url = new URL(request.url);
   const parts = url.pathname.split("/").filter(Boolean);
-  const id = parts[parts.length - 2];
-  if (!id) {
-    return errorResponse("id da petição obrigatório", 400);
-  }
+  const rawId = parts[parts.length - 2];
+  const idCheck = validatePeticaoId(rawId);
+  if (!idCheck.ok) return idCheck.response;
+  const id = idCheck.data;
 
   const record = await readRecord(env, id);
   if (!record) {
