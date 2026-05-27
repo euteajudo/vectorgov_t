@@ -137,6 +137,27 @@ async function dispatch(
   env: Env,
 ): Promise<ReturnType<typeof jsonRpcSuccess> | ReturnType<typeof jsonRpcError>> {
   switch (method) {
+    // Handshake obrigatório do MCP (Streamable HTTP). Sem isso, clientes
+    // como Claude Code reportam "Failed to connect" antes de chamar qualquer
+    // outro método.
+    case "initialize": {
+      return jsonRpcSuccess(id, {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+        serverInfo: {
+          name: "vectorgov-t-mcp",
+          version: "0.1.0",
+        },
+      });
+    }
+
+    // Notifications enviadas pelo client após initialize.
+    // Não exigem resposta semântica, só ack.
+    case "notifications/initialized":
+    case "notifications/cancelled": {
+      return jsonRpcSuccess(id, null);
+    }
+
     case "tools/list": {
       return jsonRpcSuccess(id, TOOLS_CATALOG);
     }

@@ -36,6 +36,13 @@ export interface Env {
   // KV
   CACHE: KVNamespace;
 
+  // Service binding para o Worker do Container Python (ingestion-api).
+  // Quando configurado em wrangler.toml, permite chamar /parse SEM passar
+  // por DNS público (evita Cloudflare error 1042 — loop detection entre
+  // Workers da mesma conta). Fallback: fetch direto via CONTAINER_BASE_URL
+  // no container-client.ts se este binding não estiver presente.
+  INGESTION?: Fetcher;
+
   // Secrets (não bindings)
   GOOGLE_API_KEY?: string;
   INGESTION_API_SECRET?: string;
