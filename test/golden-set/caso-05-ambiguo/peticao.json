@@ -1,0 +1,13 @@
+{
+  "metadata": {
+    "contrato_numero": "156/2025",
+    "contratante": "Universidade Federal Tecnológica",
+    "contratante_cnpj": "77777777000177",
+    "contratado": "Epsilon Tecnologia da Informação Ltda",
+    "contratado_cnpj": "88888888000188",
+    "data_protocolo": "2026-05-10",
+    "valor_pleiteado_centavos": 12000000,
+    "observacoes": "Pedido fundamentado em alegada mudança regulatória de proteção de dados (LGPD), exigindo investimento extra em infraestrutura. Discutível se cabe reequilíbrio ou se é risco do negócio."
+  },
+  "peticao_texto": "PRÓ-REITORIA DE PLANEJAMENTO\n\nEPSILON TECNOLOGIA DA INFORMAÇÃO LTDA, contratada para fornecimento de sistema de gestão acadêmica (Contrato nº 156/2025), vem requerer reequilíbrio no valor de R$ 120.000,00.\n\nFUNDAMENTO:\nNo curso da execução do contrato, a ANPD publicou orientação técnica nº 04/2026 detalhando requisitos adicionais de pseudonimização e auditoria de logs para sistemas que processam dados sensíveis de estudantes. Embora a LGPD (Lei 13.709/2018) já existisse na assinatura do contrato, esta orientação trouxe novos requisitos não previstos no edital, exigindo:\n- Implementação de pseudonimização em 3 módulos do sistema\n- Auditoria de logs com retenção mínima de 5 anos (era 1 ano)\n- Contratação de DPO terceirizado\n\nCUSTOS:\nDesenvolvimento dos requisitos novos: R$ 80.000,00\nInfraestrutura de logs estendidos: R$ 25.000,00\nDPO terceirizado (12 meses): R$ 15.000,00\nTotal: R$ 120.000,00\n\nFUNDAMENTO LEGAL:\n- Art. 124, II, 'd', Lei 14.133/2021\n- LGPD (Lei 13.709/2018)\n- Orientação Técnica ANPD nº 04/2026\n\nNota: parte da doutrina entende que orientações infralegais não geram reequilíbrio (constituem 'risco regulatório ordinário'). Pedimos posicionamento."
+}

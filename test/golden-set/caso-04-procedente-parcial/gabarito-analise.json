@@ -1,0 +1,22 @@
+{
+  "veredito_esperado": "parcialmente_procedente",
+  "score_minimo_esperado": 0.65,
+  "citacoes_obrigatorias": [
+    {
+      "norma": "Lei nº 14.133/2021",
+      "artigo": "art. 124, II, d",
+      "motivo": "Base legal correta foi invocada"
+    }
+  ],
+  "pontos_a_verificar": [
+    "Reconhece a procedência DO PLEITO em si (existe fato superveniente)",
+    "Identifica que o ÍNDICE usado (IPCA) é INADEQUADO para o setor (deveria ser INCC ou similar setorial)",
+    "Aponta inconsistência no próprio cálculo do contratado (R$ 18.000 vs R$ 87.450)",
+    "Sugere recálculo com índice setorial correto",
+    "Sugere valor recomendado MENOR que o pleiteado (proporcional)"
+  ],
+  "veredictos_inaceitaveis": [
+    "procedente: aceitaria cálculo errado",
+    "improcedente: ignoraria que existe fato superveniente real"
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "veredito_esperado": "inconclusivo",
+  "score_minimo_esperado": 0.0,
+  "score_maximo_esperado": 0.50,
+  "citacoes_obrigatorias": [
+    {
+      "norma": "Lei nº 14.133/2021",
+      "artigo": "art. 124, II, d",
+      "motivo": "Base legal correta foi invocada"
+    }
+  ],
+  "pontos_a_verificar": [
+    "Identifica AUSÊNCIA de memória de cálculo como bloqueio formal",
+    "Identifica AUSÊNCIA de valor_pleiteado_centavos (0) como sinal de petição incompleta",
+    "Identifica AUSÊNCIA de comprovantes de variação cambial e seu impacto",
+    "Aponta ponto bloqueante: NÃO há como deferir/indeferir sem o cálculo",
+    "Recomenda intimação do contratado para suprir omissões em prazo definido"
+  ],
+  "veredictos_inaceitaveis": [
+    "procedente: não há valor sequer para deferir",
+    "improcedente: o pedido não foi avaliado no mérito, apenas incompleto",
+    "parcialmente_procedente: mesma razão"
+  ]
+}
