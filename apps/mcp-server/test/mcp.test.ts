@@ -32,7 +32,7 @@ async function rpcCall(
 }
 
 describe("POST /mcp/v1 — tools/list", () => {
-  it("retorna { tools: [] } sem tools cadastradas (F1)", async () => {
+  it("retorna catálogo com 9 tools (F2 — semantic + filesystem)", async () => {
     const { status, json } = await rpcCall({
       jsonrpc: "2.0",
       id: 1,
@@ -41,9 +41,30 @@ describe("POST /mcp/v1 — tools/list", () => {
     expect(status).toBe(200);
     expect(json.jsonrpc).toBe("2.0");
     expect(json.id).toBe(1);
-    const result = json.result as { tools: unknown[] };
+    const result = json.result as {
+      tools: Array<{ name: string; description: string; inputSchema: unknown }>;
+    };
     expect(Array.isArray(result.tools)).toBe(true);
-    expect(result.tools).toHaveLength(0);
+    expect(result.tools).toHaveLength(9);
+    const names = result.tools.map((t) => t.name);
+    expect(names).toEqual([
+      "buscar_legislacao",
+      "consultar_artigo",
+      "listar_artigos_por_tema",
+      "comparar_redacoes",
+      "fs_listar_normas",
+      "fs_listar_estrutura",
+      "fs_ler_dispositivo",
+      "fs_ler_intervalo",
+      "fs_grep",
+    ]);
+    // Cada tool deve ter description e inputSchema válidos.
+    for (const t of result.tools) {
+      expect(typeof t.description).toBe("string");
+      expect(t.description.length).toBeGreaterThan(10);
+      const schema = t.inputSchema as Record<string, unknown>;
+      expect(schema.type).toBe("object");
+    }
   });
 
   it("preserva ID string da requisição", async () => {
