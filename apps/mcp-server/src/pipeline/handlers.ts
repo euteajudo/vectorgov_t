@@ -165,20 +165,49 @@ export async function handleIngestaoIniciar(
   const arrayBuffer = await data.pdf.arrayBuffer();
   const pdfBlob = new Blob([arrayBuffer], { type: "application/pdf" });
 
-  // Dispara pipeline em background. `ctx.waitUntil()` garante que o
-  // Worker não termine antes do pipeline acabar.
-  ctx.waitUntil(
-    runIngestionPipeline(env, {
-      ingestaoId: id,
-      pdf: pdfBlob,
-      pdfFilename: data.pdf.name,
-      leiId: data.leiId,
-      leiTipo: data.leiTipo,
-      numero: data.numero,
-      ano: data.ano,
-      dataPublicacao: data.dataPublicacao,
-    }),
-  );
+  // Modo SYNC vs ASYNC.
+  //
+  // ASYNC (?sync=false ou omitido): dispara via `ctx.waitUntil` e retorna 202.
+  // Bom para clientes que querem polling do /status. Limitação: o waitUntil
+  // tem timeout (~30s no Standard) e pode ser CANCELADO antes do pipeline
+  // terminar para PDFs grandes (LC 214 leva ~3 min). Workaround: usar `?sync=true`.
+  //
+  // SYNC (?sync=true): aguarda o pipeline inteiro antes de retornar 200.
+  // Bom para CLI/integrações que toleram requests longos (até ~15 min wall
+  // clock no Standard, pois CPU time é limitado mas I/O não). Trade-off:
+  // cliente precisa de timeout HTTP adequado.
+  const url = new URL(request.url);
+  const isSync = url.searchParams.get("sync") === "true";
+
+  const pipelineInput = {
+    ingestaoId: id,
+    pdf: pdfBlob,
+    pdfFilename: data.pdf.name,
+    leiId: data.leiId,
+    leiTipo: data.leiTipo,
+    numero: data.numero,
+    ano: data.ano,
+    dataPublicacao: data.dataPublicacao,
+  };
+
+  if (isSync) {
+    try {
+      await runIngestionPipeline(env, pipelineInput);
+      const finalStatus = await readStatus(env, id);
+      return jsonResponse(
+        { ingestao_id: id, lei_id: data.leiId, status: finalStatus, status_url: `/ingestao/status/${id}` },
+        200,
+      );
+    } catch (err) {
+      return errorResponse(
+        `Falha no pipeline: ${err instanceof Error ? err.message : "erro desconhecido"}`,
+        500,
+      );
+    }
+  }
+
+  // Modo ASYNC (default) — background via waitUntil.
+  ctx.waitUntil(runIngestionPipeline(env, pipelineInput));
 
   return jsonResponse(
     {

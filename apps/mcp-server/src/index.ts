@@ -128,7 +128,12 @@ async function route(
     return handleRobots();
   }
 
-  if (request.method === "POST" && url.pathname === "/mcp/v1") {
+  // MCP endpoint — aceita tanto `/mcp` (padrão Streamable HTTP) quanto
+  // `/mcp/v1` (mantido por compatibilidade com clientes antigos).
+  if (
+    request.method === "POST" &&
+    (url.pathname === "/mcp/v1" || url.pathname === "/mcp")
+  ) {
     return handleMcp(request, env);
   }
 

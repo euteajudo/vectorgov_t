@@ -29,6 +29,14 @@ database_id = "44068178-9600-42f3-875d-26ce47a11fd4"
 binding = "CACHE"
 id = "0b4eaf157c064a51bcbf1d5e87af6f66"
 
+# Service binding para o Worker do Container Python (ingestion-api).
+# Evita Cloudflare error 1042 (loop detection) quando dois Workers da
+# mesma conta tentam se chamar via URL pública. O Worker `vectorgov-t-ingestion`
+# expõe `POST /parse` (proxy para o Container Python via Durable Object).
+[[services]]
+binding = "INGESTION"
+service = "vectorgov-t-ingestion"
+
 [observability]
 enabled = true
 

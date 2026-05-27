@@ -93,7 +93,13 @@ export async function callContainerParse(
 
   let response: Response;
   try {
-    response = await fetch(`${CONTAINER_BASE_URL}/parse`, {
+    // Preferência: usar service binding (env.INGESTION) — evita Cloudflare
+    // error 1042 (loop detection) que ocorre quando Workers da mesma conta
+    // tentam se chamar via URL pública.
+    //
+    // Fallback: fetch direto via URL pública (útil em dev/teste local
+    // quando o binding não está disponível, ex.: `wrangler dev` standalone).
+    const requestInit: RequestInit = {
       method: "POST",
       headers: {
         "X-Ingestion-Secret": secret,
@@ -101,7 +107,16 @@ export async function callContainerParse(
       },
       body: form,
       signal: controller.signal,
-    });
+    };
+
+    if (env.INGESTION) {
+      // Service binding: o path é relativo ao Worker bindado.
+      response = await env.INGESTION.fetch(
+        new Request("https://ingestion.local/parse", requestInit),
+      );
+    } else {
+      response = await fetch(`${CONTAINER_BASE_URL}/parse`, requestInit);
+    }
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
       throw new Error(
