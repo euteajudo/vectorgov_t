@@ -24,6 +24,7 @@ bucket_name = "vectorgov-t-skills"
 binding = "DB"
 database_name = "vectorgov-t-db"
 database_id = "44068178-9600-42f3-875d-26ce47a11fd4"
+migrations_dir = "../../infra/d1-migrations"
 
 [[kv_namespaces]]
 binding = "CACHE"
