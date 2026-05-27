@@ -1,24 +1,32 @@
 /**
- * Registry central das tools MCP.
+ * Boot agregador de todas as tools MCP.
  *
- * Exporta o array `MCP_TOOLS` na ordem canônica (4 semânticas + 5 filesystem)
- * e um helper `findTool(name)` para o dispatch em `tools/call`.
+ * Importar este módulo garante que TODOS os subgrupos sejam registrados:
+ *   - Skills (4 tools)              — Track E, via boot do skills/index.js
+ *   - Leis semânticas (4 tools)     — Track D, via array MCP_TOOLS
+ *   - Leis filesystem (5 tools)     — Track D, via array MCP_TOOLS
  *
- * Adicionar uma nova tool:
- *   1. Criar `src/mcp/tools/<grupo>/<slug>.ts` com `export const fooTool: ToolDescriptor`.
- *   2. Importar e incluir aqui em `MCP_TOOLS`.
- *   3. Atualizar `MCP_TOOL_NAMES` em `packages/schemas/src/mcp-tools.ts`.
+ * Total: 13 tools expostas em `tools/list`.
+ *
+ * Convenção de adição de tool nova:
+ *   1. Criar `src/mcp/tools/<grupo>/<slug>.ts`.
+ *   2. Se for "lei", incluir em `MCP_TOOLS` abaixo.
+ *      Se for "skill", `skills/index.js` cuida do registro via registry.
+ *   3. Atualizar `MCP_TOOL_NAMES` em `packages/schemas/src/mcp-tools.ts` (leis).
  */
+
+// Boot do registry de skills (Track E)
+import "./skills/index.js";
 
 import type { ToolDescriptor } from "./types.js";
 
-// Semânticas
+// Leis semânticas (Track D)
 import { buscarLegislacaoTool } from "./semantic/buscar-legislacao.js";
 import { consultarArtigoTool } from "./semantic/consultar-artigo.js";
 import { listarArtigosPorTemaTool } from "./semantic/listar-artigos-por-tema.js";
 import { compararRedacoesTool } from "./semantic/comparar-redacoes.js";
 
-// Filesystem
+// Leis filesystem (Track D)
 import { fsListarNormasTool } from "./filesystem/fs-listar-normas.js";
 import { fsListarEstruturaTool } from "./filesystem/fs-listar-estrutura.js";
 import { fsLerDispositivoTool } from "./filesystem/fs-ler-dispositivo.js";
@@ -26,9 +34,9 @@ import { fsLerIntervaloTool } from "./filesystem/fs-ler-intervalo.js";
 import { fsGrepTool } from "./filesystem/fs-grep.js";
 
 /**
- * Ordem importa: aparece exatamente assim em `tools/list`.
- * Mantemos primeiro o grupo semântico (mais usado por agentes), depois
- * o grupo filesystem (mais "infra").
+ * Array das 9 tools de leis na ordem canônica.
+ * As 4 tools de skills NÃO aparecem aqui — são registradas via `registry.ts`
+ * pelo boot do `./skills/index.js`.
  */
 export const MCP_TOOLS: ToolDescriptor[] = [
   buscarLegislacaoTool,
@@ -47,10 +55,10 @@ const BY_NAME: Map<string, ToolDescriptor> = new Map(
 );
 
 /**
- * Lookup tipado de uma tool pelo nome.
+ * Lookup tipado de uma tool de LEI pelo nome.
  *
- * Devolve `undefined` quando o nome não existe — o handler MCP traduz para
- * erro JSON-RPC `-32601`.
+ * Para tools de SKILLS, use `findTool()` do registry (`./registry.js`).
+ * O handler MCP em `server.ts` consulta ambos.
  */
 export function findTool(name: string): ToolDescriptor | undefined {
   return BY_NAME.get(name);
@@ -58,3 +66,12 @@ export function findTool(name: string): ToolDescriptor | undefined {
 
 export type { ToolDescriptor } from "./types.js";
 export { ToolValidationError } from "./types.js";
+
+// Re-exports do registry de skills (acesso unificado)
+export {
+  listToolDescriptors,
+  invokeTool,
+  findTool as findSkillTool,
+  ToolInputError,
+  ToolExecutionError,
+} from "./registry.js";

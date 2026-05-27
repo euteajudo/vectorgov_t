@@ -32,7 +32,7 @@ async function rpcCall(
 }
 
 describe("POST /mcp/v1 — tools/list", () => {
-  it("retorna catálogo com 9 tools (F2 — semantic + filesystem)", async () => {
+  it("retorna catálogo com 13 tools (9 leis Track D + 4 skills Track E)", async () => {
     const { status, json } = await rpcCall({
       jsonrpc: "2.0",
       id: 1,
@@ -45,9 +45,10 @@ describe("POST /mcp/v1 — tools/list", () => {
       tools: Array<{ name: string; description: string; inputSchema: unknown }>;
     };
     expect(Array.isArray(result.tools)).toBe(true);
-    expect(result.tools).toHaveLength(9);
+    expect(result.tools).toHaveLength(13);
     const names = result.tools.map((t) => t.name);
-    expect(names).toEqual([
+    // Leis primeiro (ordem do array MCP_TOOLS — Track D)
+    expect(names.slice(0, 9)).toEqual([
       "buscar_legislacao",
       "consultar_artigo",
       "listar_artigos_por_tema",
@@ -57,6 +58,13 @@ describe("POST /mcp/v1 — tools/list", () => {
       "fs_ler_dispositivo",
       "fs_ler_intervalo",
       "fs_grep",
+    ]);
+    // Skills depois (ordem do registry — Track E)
+    expect(names.slice(9).sort()).toEqual([
+      "skill_carregar",
+      "skill_identificar_relevantes",
+      "skill_listar",
+      "skill_publicar",
     ]);
     // Cada tool deve ter description e inputSchema válidos.
     for (const t of result.tools) {

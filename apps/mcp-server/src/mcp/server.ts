@@ -1,10 +1,9 @@
 /**
- * Handler MCP — implementa o subset JSON-RPC 2.0 com tools reais (F2.D).
+ * Handler MCP — implementa o subset JSON-RPC 2.0 com tools reais.
  *
  * Métodos suportados:
- *  - `tools/list` → catálogo de 9 tools (`MCP_TOOLS`).
- *  - `tools/call` → dispatch para o handler da tool (resposta MCP envelope
- *    `{ content: [{ type: 'text', text }], isError? }`).
+ *  - `tools/list` → catálogo unificado de 13 tools (9 leis Track D + 4 skills Track E).
+ *  - `tools/call` → dispatch para o handler da tool correspondente.
  *
  * Códigos de erro JSON-RPC seguidos:
  *  - `-32700` Parse error (corpo inválido).
@@ -21,7 +20,17 @@ import {
   jsonRpcSuccess,
   type JsonRpcId,
 } from "../lib/responses.js";
-import { MCP_TOOLS, findTool, ToolValidationError } from "./tools/index.js";
+import {
+  MCP_TOOLS,
+  findTool,
+  ToolValidationError,
+  // Skills (Track E) via registry
+  listToolDescriptors,
+  invokeTool,
+  findSkillTool,
+  ToolInputError,
+  ToolExecutionError,
+} from "./tools/index.js";
 
 /**
  * Estrutura mínima de uma requisição JSON-RPC 2.0.
@@ -101,18 +110,22 @@ function toolErrorEnvelope(message: string, details?: unknown): ToolCallEnvelope
 }
 
 /**
- * Catálogo de tools serializável — derivado de `MCP_TOOLS`.
+ * Catálogo unificado de tools (leis + skills).
  *
- * Calculado uma vez por isolate (módulo carregado uma só vez) para evitar
- * re-renderizar JSON Schema em toda chamada `tools/list`.
+ * Calculado uma vez por isolate (módulo carregado uma só vez).
+ * Ordem: leis primeiro (Track D), depois skills (Track E via registry).
  */
-const TOOLS_CATALOG: ToolsListResult = {
-  tools: MCP_TOOLS.map((t) => ({
+function buildCatalog(): ToolsListResult {
+  const leis = MCP_TOOLS.map((t) => ({
     name: t.name,
     description: t.description,
     inputSchema: t.inputSchema,
-  })),
-};
+  }));
+  const skills = listToolDescriptors();
+  return { tools: [...leis, ...skills] };
+}
+
+const TOOLS_CATALOG: ToolsListResult = buildCatalog();
 
 /**
  * Roteia o método JSON-RPC para o handler apropriado.
@@ -144,28 +157,45 @@ async function dispatch(
           "Invalid params: 'name' (string) é obrigatório",
         );
       }
-      const tool = findTool(callParams.name);
-      if (!tool) {
-        return jsonRpcError(id, -32601, `Tool not found: ${callParams.name}`);
+
+      // 1. Tenta tool de LEI (Track D)
+      const leiTool = findTool(callParams.name);
+      if (leiTool) {
+        try {
+          const args = callParams.arguments ?? {};
+          const result = await leiTool.handler(args, env);
+          return jsonRpcSuccess(id, toolEnvelope(result));
+        } catch (err) {
+          if (err instanceof ToolValidationError) {
+            return jsonRpcSuccess(
+              id,
+              toolErrorEnvelope(err.message, err.details),
+            );
+          }
+          const msg = err instanceof Error ? err.message : "tool execution failed";
+          return jsonRpcError(id, -32603, "Internal error", { reason: msg });
+        }
       }
 
-      // Dispatch — wrap em try/catch para distinguir validação x runtime.
-      try {
-        const args = callParams.arguments ?? {};
-        const result = await tool.handler(args, env);
-        return jsonRpcSuccess(id, toolEnvelope(result));
-      } catch (err) {
-        if (err instanceof ToolValidationError) {
-          // Validation error → ainda é envelope MCP com `isError`, mas o
-          // JSON-RPC envelope é success (spec MCP separa erro semântico).
-          return jsonRpcSuccess(
-            id,
-            toolErrorEnvelope(err.message, err.details),
-          );
+      // 2. Tenta tool de SKILL (Track E via registry)
+      if (findSkillTool(callParams.name)) {
+        try {
+          const data = await invokeTool(env, callParams.name, callParams.arguments);
+          return jsonRpcSuccess(id, { content: data });
+        } catch (err) {
+          if (err instanceof ToolInputError) {
+            return jsonRpcError(id, -32602, err.message, err.details);
+          }
+          if (err instanceof ToolExecutionError) {
+            return jsonRpcError(id, -32603, err.message, err.details);
+          }
+          const message = err instanceof Error ? err.message : "Unknown error";
+          return jsonRpcError(id, -32603, "Internal error", { reason: message });
         }
-        const msg = err instanceof Error ? err.message : "tool execution failed";
-        return jsonRpcError(id, -32603, "Internal error", { reason: msg });
       }
+
+      // 3. Tool não encontrada em nenhum registry
+      return jsonRpcError(id, -32601, `Tool not found: ${callParams.name}`);
     }
 
     default: {

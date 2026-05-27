@@ -2,13 +2,24 @@
  * Fakes mínimos dos bindings Cloudflare usados pelo Worker em ambiente
  * de teste (vitest rodando em Node puro).
  *
- * Combina as APIs introduzidas pelas Tracks D (tools MCP) e G (pipeline):
- *   - APIs com options (D): `createFakeAi({embedding, responses})`,
- *     `createFakeR2(initial)`, `createFakeD1({rules})`,
- *     `createFakeVectorize({matches})`.
- *   - APIs com state introspection (G): `createFakeAi()` → `FakeAi`,
- *     `createFakeR2Bucket()` → `FakeR2Bucket`, `createFakeD1()` → `FakeD1Database`,
- *     `createFakeVectorize()` → `FakeVectorize`.
+ * Combina as APIs introduzidas pelas Tracks D (tools MCP de leis), E (skills)
+ * e G (pipeline de ingestão):
+ *
+ *   - **KV** (`createFakeKv`) — store in-memory simples.
+ *   - **AI** (`createFakeAi`) — embedding bge-m3 determinístico + reranker stub,
+ *     com state introspectável (callCount, failOnCalls, textsSeen) e overrides
+ *     opcionais (embedding fixo, responses por modelo).
+ *   - **Vectorize** (`createFakeVectorize`) — upsert/deleteByIds com state +
+ *     query stub configurável (matches).
+ *   - **R2** — duas APIs:
+ *       - `createFakeR2()` → FakeR2 com `__snapshot()`/`__seed()` (Track E, mais
+ *         rica; usada pelas skills tools)
+ *       - `createFakeR2Bucket()` → FakeR2Bucket com `store`/`putCount`/`deleteCount`
+ *         (Track G; usada pelo pipeline orchestrator)
+ *   - **D1** (`createFakeD1`) — duas modalidades:
+ *       - sem opts → motor com state interno (state.normas, state.dispositivos,
+ *         state.versoes, state.fts) — usado pelo pipeline
+ *       - `{ rules }` → rule-based (regex/substring → rows) — usado por tools
  *
  * Os fakes preservam "fail-fast" via `unusedBinding()`: qualquer binding não
  * configurado em uma suíte explode no acesso para deixar claro que o handler
@@ -68,7 +79,7 @@ export function createFakeKv(): KVNamespace {
 }
 
 // ============================================================================
-// AI (Workers AI) — versão unificada
+// AI (Workers AI) — unificado D+G
 // ============================================================================
 
 export interface FakeAiOptions {
@@ -84,9 +95,6 @@ export interface FakeAi extends Ai {
   textsSeen: string[][];
 }
 
-/**
- * Hash simples para gerar valores reproduzíveis sem depender de crypto.
- */
 function simpleHash(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) {
@@ -95,10 +103,6 @@ function simpleHash(s: string): number {
   return h;
 }
 
-/**
- * Gera um vetor "embedding" determinístico baseado no hash do texto.
- * Não é semântico — só serve para testes assertarem ordem/dimensão.
- */
 function fakeEmbedding(text: string, fallback?: number[]): number[] {
   if (fallback) return fallback;
   const seed = simpleHash(text);
@@ -124,7 +128,6 @@ export function createFakeAi(opts: FakeAiOptions = {}): FakeAi {
       state.callCount += 1;
       (ai as { callCount: number }).callCount = state.callCount;
 
-      // Override por modelo (versão D)
       if (opts.responses && model in opts.responses) {
         return opts.responses[model];
       }
@@ -156,7 +159,7 @@ export function createFakeAi(opts: FakeAiOptions = {}): FakeAi {
 }
 
 // ============================================================================
-// Vectorize — versão unificada
+// Vectorize — unificado D+G
 // ============================================================================
 
 export interface FakeVectorizeOptions {
@@ -219,41 +222,150 @@ export function createFakeVectorize(opts: FakeVectorizeOptions = {}): FakeVector
 }
 
 // ============================================================================
-// R2 — duas APIs (simples + state)
+// R2 (versão Track E — rica, com __snapshot/__seed)
 // ============================================================================
 
 /**
- * R2 simples (versão D): só `get`/`put`/`delete`. Sem state introspection.
+ * Fake mínimo de bucket R2 — armazena `string` na memória.
+ *
+ * Suporta a superfície usada pelo subsistema de skills:
+ *   - `put(key, value, opts?)` — value pode ser string.
+ *   - `get(key)` — devolve objeto com `text()`, `json()`, ou `null`.
+ *   - `head(key)` — devolve metadados (ou `null`).
+ *   - `list({ prefix, cursor, limit })` — listagem paginada simples.
+ *   - `delete(key | string[])` — remove um ou vários objetos.
+ *   - `__snapshot()` — snapshot dict para asserts.
+ *   - `__seed(entries)` — pre-popula bucket sem chamar `put`.
  */
-export function createFakeR2(initial: Record<string, unknown> = {}): R2Bucket {
-  const store = new Map<string, string>();
+export interface FakeR2 extends R2Bucket {
+  __snapshot(): Record<string, string>;
+  __seed(entries: Record<string, string>): void;
+}
+
+export function createFakeR2(initial: Record<string, unknown> = {}): FakeR2 {
+  const store = new Map<
+    string,
+    { body: string; metadata: Record<string, string> }
+  >();
+
+  // Compatibilidade com Track D: aceita dict inicial (valor pode ser
+  // string ou objeto JSON-serializável).
   for (const [k, v] of Object.entries(initial)) {
-    store.set(k, typeof v === "string" ? v : JSON.stringify(v));
+    store.set(k, {
+      body: typeof v === "string" ? v : JSON.stringify(v),
+      metadata: {},
+    });
   }
 
-  const bucket = {
+  function makeObject(key: string, raw: string): R2ObjectBody {
+    return {
+      key,
+      version: "v1",
+      size: raw.length,
+      etag: `etag-${key}`,
+      httpEtag: `"etag-${key}"`,
+      checksums: {
+        toJSON: () => ({}),
+      } as R2Checksums,
+      uploaded: new Date(),
+      httpMetadata: { contentType: "text/markdown; charset=utf-8" },
+      customMetadata: store.get(key)?.metadata ?? {},
+      range: undefined,
+      storageClass: "Standard",
+      ssecKeyMd5: undefined,
+      writeHttpMetadata(_h: Headers): void {
+        /* no-op */
+      },
+      async text(): Promise<string> {
+        return raw;
+      },
+      async json<T>(): Promise<T> {
+        return JSON.parse(raw) as T;
+      },
+      async arrayBuffer(): Promise<ArrayBuffer> {
+        return new TextEncoder().encode(raw).buffer as ArrayBuffer;
+      },
+      async blob(): Promise<Blob> {
+        return new Blob([raw]);
+      },
+      async bytes(): Promise<Uint8Array> {
+        return new TextEncoder().encode(raw);
+      },
+      body: new ReadableStream<Uint8Array>({
+        start(controller): void {
+          controller.enqueue(new TextEncoder().encode(raw));
+          controller.close();
+        },
+      }),
+      bodyUsed: false,
+    } as unknown as R2ObjectBody;
+  }
+
+  const bucket: Partial<FakeR2> = {
+    async head(key: string): Promise<R2Object | null> {
+      const entry = store.get(key);
+      if (!entry) return null;
+      return makeObject(key, entry.body) as unknown as R2Object;
+    },
     async get(key: string): Promise<R2ObjectBody | null> {
-      const raw = store.get(key);
-      if (raw === undefined) return null;
-      const body = {
-        async json<T>(): Promise<T> {
-          return JSON.parse(raw) as T;
-        },
-        async text(): Promise<string> {
-          return raw;
-        },
-      };
-      return body as unknown as R2ObjectBody;
+      const entry = store.get(key);
+      if (!entry) return null;
+      return makeObject(key, entry.body);
     },
-    async put(key: string, value: string): Promise<void> {
-      store.set(key, value);
+    async put(
+      key: string,
+      value: string | ArrayBuffer | ArrayBufferView | ReadableStream | Blob | null,
+      opts?: R2PutOptions,
+    ): Promise<R2Object> {
+      if (typeof value !== "string") {
+        throw new Error("FakeR2.put: apenas string suportada em testes");
+      }
+      const metadata =
+        (opts as { customMetadata?: Record<string, string> } | undefined)
+          ?.customMetadata ?? {};
+      store.set(key, { body: value, metadata });
+      return makeObject(key, value) as unknown as R2Object;
     },
-    async delete(key: string): Promise<void> {
-      store.delete(key);
+    async list(opts?: R2ListOptions): Promise<R2Objects> {
+      const prefix = opts?.prefix ?? "";
+      const limit = opts?.limit ?? 1000;
+      const all = Array.from(store.keys())
+        .filter((k) => k.startsWith(prefix))
+        .sort();
+      const cursor = opts?.cursor ? Number.parseInt(opts.cursor, 10) : 0;
+      const slice = all.slice(cursor, cursor + limit);
+      const objects = slice.map(
+        (k) => makeObject(k, store.get(k)!.body) as unknown as R2Object,
+      );
+      const truncated = cursor + slice.length < all.length;
+      return {
+        objects,
+        truncated,
+        cursor: truncated ? String(cursor + slice.length) : undefined,
+        delimitedPrefixes: [],
+      } as unknown as R2Objects;
+    },
+    async delete(keys: string | string[]): Promise<void> {
+      const list = Array.isArray(keys) ? keys : [keys];
+      for (const k of list) store.delete(k);
+    },
+    __snapshot(): Record<string, string> {
+      const out: Record<string, string> = {};
+      for (const [k, v] of store) out[k] = v.body;
+      return out;
+    },
+    __seed(entries: Record<string, string>): void {
+      for (const [k, v] of Object.entries(entries)) {
+        store.set(k, { body: v, metadata: {} });
+      }
     },
   };
-  return bucket as unknown as R2Bucket;
+  return bucket as FakeR2;
 }
+
+// ============================================================================
+// R2 (versão Track G — com state byteArray, usada pelo pipeline)
+// ============================================================================
 
 interface FakeR2Object {
   key: string;
@@ -268,9 +380,6 @@ export interface FakeR2Bucket extends R2Bucket {
   deleteCount: number;
 }
 
-/**
- * Converte qualquer body aceito pelo `put` para ArrayBuffer.
- */
 async function bodyToArrayBuffer(
   body: string | ArrayBuffer | ArrayBufferView | ReadableStream | Blob | null,
 ): Promise<ArrayBuffer> {
@@ -289,9 +398,6 @@ async function bodyToArrayBuffer(
   throw new Error("createFakeR2Bucket: ReadableStream não suportado em testes");
 }
 
-/**
- * R2 com state (versão G): mantém store, putCount, deleteCount acessíveis.
- */
 export function createFakeR2Bucket(): FakeR2Bucket {
   const store = new Map<string, FakeR2Object>();
   const counters = { putCount: 0, deleteCount: 0 };
@@ -375,15 +481,14 @@ export function createFakeR2Bucket(): FakeR2Bucket {
 }
 
 // ============================================================================
-// D1 — duas APIs (rule-based + state)
+// D1 — unificado D (rule-based) + G (state)
 // ============================================================================
 
 export interface FakeD1Options {
   /**
    * Lista de "regras": cada regra casa por substring no SQL e devolve linhas.
-   * Avaliada na ordem; a primeira regra que casar é usada.
-   * Quando dado, usa o motor rule-based (versão D).
-   * Quando ausente, usa o motor com state (versão G).
+   * Quando dado, usa o motor rule-based (Track D).
+   * Quando ausente, usa o motor com state (Track G).
    */
   rules?: Array<{
     match: string | RegExp;
@@ -402,7 +507,6 @@ export interface FakeD1Database extends D1Database {
 }
 
 export function createFakeD1(opts: FakeD1Options = {}): FakeD1Database {
-  // Modo rule-based (versão D)
   if (opts.rules) {
     function matchRows(sql: string): unknown[] {
       for (const r of opts.rules ?? []) {
@@ -460,7 +564,7 @@ export function createFakeD1(opts: FakeD1Options = {}): FakeD1Database {
     return db;
   }
 
-  // Modo com state (versão G)
+  // Modo com state (Track G)
   const state = {
     normas: new Map<string, Record<string, unknown>>(),
     dispositivos: new Map<string, Record<string, unknown>>(),
@@ -608,17 +712,18 @@ export interface TestEnvOverrides {
 }
 
 /**
- * Monta um `Env` de teste com KV real (in-memory) e demais bindings inertes.
+ * Monta um `Env` de teste com KV + R2_SKILLS reais (in-memory) e demais
+ * bindings inertes.
  *
  * Passe `overrides` para configurar individualmente (ex.: ao testar
- * tools que falam com R2/D1/AI/VECTORIZE).
+ * tools que falam com R2_LEIS/D1/AI/VECTORIZE).
  */
 export function createTestEnv(overrides: TestEnvOverrides = {}): Env {
   return {
     AI: overrides.AI ?? unusedBinding<Ai>("AI"),
     VECTORIZE: overrides.VECTORIZE ?? unusedBinding<VectorizeIndex>("VECTORIZE"),
     R2_LEIS: overrides.R2_LEIS ?? unusedBinding<R2Bucket>("R2_LEIS"),
-    R2_SKILLS: overrides.R2_SKILLS ?? unusedBinding<R2Bucket>("R2_SKILLS"),
+    R2_SKILLS: overrides.R2_SKILLS ?? createFakeR2(),
     DB: overrides.DB ?? unusedBinding<D1Database>("DB"),
     CACHE: overrides.CACHE ?? createFakeKv(),
   };

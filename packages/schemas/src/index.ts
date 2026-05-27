@@ -31,6 +31,9 @@ export * from "./pipeline.js";
 export * from "./ingestion.js";
 export * from "./mcp-tools.js";
 
+// Skills system (Track E)
+export * from "./skills.js";
+
 // Sistema agêntico (Track F)
 export * from "./peticao.js";
 export * from "./analise.js";
