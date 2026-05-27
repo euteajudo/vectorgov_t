@@ -1,0 +1,13 @@
+{
+  "metadata": {
+    "contrato_numero": "089/2024",
+    "contratante": "Tribunal de Justiça do Estado/RS",
+    "contratante_cnpj": "55555555000155",
+    "contratado": "Delta Limpeza e Conservação Ltda",
+    "contratado_cnpj": "66666666000166",
+    "data_protocolo": "2026-05-02",
+    "valor_pleiteado_centavos": 8745000,
+    "observacoes": "Cálculo apresentado usa IPCA, mas o índice setorial correto seria INCC para reequilibrar custo de insumos de limpeza."
+  },
+  "peticao_texto": "EGRÉGIO TRIBUNAL DE JUSTIÇA / DEPARTAMENTO DE LICITAÇÕES\n\nDELTA LIMPEZA E CONSERVAÇÃO LTDA requer reequilíbrio do Contrato nº 089/2024 (serviços de limpeza predial) no valor de R$ 87.450,00.\n\nI. DOS FATOS\nDurante a execução do contrato, observamos aumento desproporcional dos insumos químicos especializados (sanitizantes hospitalares, desinfetantes profissionais), bem como dos EPIs descartáveis. O índice geral IPCA acumulou 8,75% no período, justificando o pleito.\n\nII. CÁLCULO (Anexo I)\nCusto base mensal: R$ 11.428,57\nReajuste pretendido (IPCA 8,75%): R$ 1.000,00/mês\nMeses restantes: 18\nTotal: R$ 18.000,00 (... está errado, recalculando ...)\nTotal correto: R$ 87.450,00\n\nIII. FUNDAMENTO\nArt. 124, II, 'd', Lei 14.133/2021\n\nIV. ANEXOS\n- Memória de cálculo\n- Notas fiscais de insumos antes e depois\n- Cronograma físico-financeiro"
+}

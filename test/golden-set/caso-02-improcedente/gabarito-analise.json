@@ -1,0 +1,21 @@
+{
+  "veredito_esperado": "improcedente",
+  "score_minimo_esperado": 0.70,
+  "citacoes_obrigatorias": [
+    {
+      "norma": "Lei nº 14.133/2021",
+      "artigo": "art. 124, II, d",
+      "motivo": "Para confirmar que NÃO se enquadra (variação ordinária, não imprevisível)"
+    }
+  ],
+  "pontos_a_verificar": [
+    "Identifica que oscilação de combustível e mão-de-obra é 'álea ordinária' (risco normal do negócio)",
+    "Aponta uso INCORRETO da Lei 8.666/93 (revogada — deve ser Lei 14.133/2021)",
+    "Aponta AUSÊNCIA de memória de cálculo e anexos comprobatórios",
+    "Recomenda indeferimento com fundamentação clara"
+  ],
+  "veredictos_inaceitaveis": [
+    "procedente: oscilação ordinária de insumos não justifica reequilíbrio",
+    "parcialmente_procedente: não há base mínima sequer para deferimento parcial"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "veredito_esperado": "inconclusivo",
+  "score_minimo_esperado": 0.40,
+  "score_maximo_esperado": 0.70,
+  "citacoes_obrigatorias": [
+    {
+      "norma": "Lei nº 14.133/2021",
+      "artigo": "art. 124, II, d",
+      "motivo": "Base legal foi invocada"
+    }
+  ],
+  "pontos_a_verificar": [
+    "Reconhece explicitamente que existe DIVERGÊNCIA DOUTRINÁRIA sobre o tema",
+    "Identifica que orientações infralegais (ANPD) NÃO têm consenso quanto a gerar reequilíbrio",
+    "NÃO inventa jurisprudência para 'fechar' o caso",
+    "Apresenta os 2 cenários (procedente E improcedente) com fundamentos",
+    "Recomenda decisão humana qualificada / consulta à Procuradoria"
+  ],
+  "veredictos_inaceitaveis": [
+    "procedente com score > 0.80: superestimaria confiança em caso ambíguo",
+    "improcedente com score > 0.80: idem"
+  ]
+}

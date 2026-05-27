@@ -1,0 +1,30 @@
+{
+  "veredito_esperado": "procedente",
+  "score_minimo_esperado": 0.75,
+  "citacoes_obrigatorias": [
+    {
+      "norma": "Lei nº 14.133/2021",
+      "artigo": "art. 124, II, d",
+      "motivo": "Base legal do reequilíbrio econômico-financeiro"
+    },
+    {
+      "norma": "Lei Complementar 214/2025",
+      "artigo": "Disposições gerais IBS/CBS",
+      "motivo": "Norma instituidora do novo regime tributário"
+    },
+    {
+      "norma": "Constituição Federal",
+      "artigo": "art. 195, V (EC 132/2023)",
+      "motivo": "Fundamento constitucional da CBS"
+    }
+  ],
+  "pontos_a_verificar": [
+    "Identificou o fato superveniente como 'mudança normativa tributária'",
+    "Calculou delta de carga tributária próximo ao alegado pelo contratado",
+    "NÃO recomendou reequilíbrio para serviços já executados (apenas saldo futuro)"
+  ],
+  "veredictos_inaceitaveis": [
+    "improcedente: violaria a tese consagrada de que mudança tributária superveniente é fato do príncipe",
+    "inconclusivo: documentação está completa, não há razão para devolver ao humano"
+  ]
+}
