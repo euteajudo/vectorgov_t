@@ -290,8 +290,8 @@ O frontend é um Worker Cloudflare empacotado pelo [`@opennextjs/cloudflare`](ht
 | `apps/web-ui/wrangler.toml` | `name = vectorgov-t-web-ui`, `main = .open-next/worker.js`, `compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]`, `[assets]` binding, `[vars]` com `NEXT_PUBLIC_MCP_BASE_URL` e `NEXT_PUBLIC_MCP_WORKER_URL` apontando pro Worker MCP de produção. |
 | `apps/web-ui/open-next.config.ts` | `defineCloudflareConfig({})` — defaults. |
 | `apps/web-ui/.env.local` | (gitignored) duas vars locais apontando pro Worker MCP. |
-| `apps/web-ui/scripts/wsl-setup-node.sh` | One-time: instala Node 22 + pnpm 11 dentro do WSL Ubuntu via nvm. |
-| `apps/web-ui/scripts/wsl-build-deploy.sh` | Pipeline de build: copia source pro WSL (isolado em `~/vectorgov-t-build`), instala, builda OpenNext, copia `.open-next/` de volta. |
+| `apps/web-ui/scripts/wsl-setup-node.sh` | One-time: instala nvm quando necessário, depois Node 22 + pnpm 11 dentro do WSL Ubuntu. |
+| `apps/web-ui/scripts/wsl-build-deploy.sh` | Pipeline de build: detecta o checkout atual, copia source pro WSL (isolado em `~/vectorgov-t-build`), instala, builda OpenNext, copia `.open-next/` de volta. |
 
 ### 12.2 Por que build via WSL no Windows
 
@@ -311,19 +311,28 @@ A solução oficial recomendada pelo próprio OpenNext (warning impresso a cada 
 Start-Process "ms-settings:developers"
 # Liga o toggle "Modo de desenvolvedor"
 
-# Instala Node 22 + pnpm 11 no WSL Ubuntu (já instalado)
-wsl -d Ubuntu -- bash /mnt/d/2026/vectorgov-t/apps/web-ui/scripts/wsl-setup-node.sh
+# Execute a partir da raiz do repo no Windows.
+$repo = (Get-Location).Path
+$wslRepo = (wsl -d Ubuntu -- wslpath -a "$repo").Trim()
+
+# Instala nvm, Node 22 e pnpm 11 no WSL Ubuntu.
+wsl -d Ubuntu -- bash "$wslRepo/apps/web-ui/scripts/wsl-setup-node.sh"
 ```
 
 **A cada deploy:**
 
 ```powershell
+# Execute a partir da raiz do repo no Windows.
+$repo = (Get-Location).Path
+$wslRepo = (wsl -d Ubuntu -- wslpath -a "$repo").Trim()
+
 # 1. Build via WSL — gera .open-next/ e copia pro Windows
-wsl -d Ubuntu -- bash /mnt/d/2026/vectorgov-t/apps/web-ui/scripts/wsl-build-deploy.sh
+wsl -d Ubuntu -- bash "$wslRepo/apps/web-ui/scripts/wsl-build-deploy.sh"
 
 # 2. Deploy do Windows (wrangler já autenticado)
-cd D:\2026\vectorgov-t\apps\web-ui
-NODE_OPTIONS=--use-system-ca npx wrangler deploy
+cd .\apps\web-ui
+$env:NODE_OPTIONS = "--use-system-ca"
+npx wrangler deploy
 ```
 
 URL resultante: `https://vectorgov-t-web-ui.<sua_subdomain>.workers.dev`.

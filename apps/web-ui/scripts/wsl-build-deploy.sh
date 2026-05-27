@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
-set -e
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-nvm use 22 >/dev/null
+set -euo pipefail
 
-SRC=/mnt/d/2026/vectorgov-t
-DEST=~/vectorgov-t-build
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+if [ ! -s "$NVM_DIR/nvm.sh" ]; then
+  echo "nvm not found. Run apps/web-ui/scripts/wsl-setup-node.sh first." >&2
+  exit 1
+fi
+. "$NVM_DIR/nvm.sh"
+nvm use 22 >/dev/null || nvm install 22
+
+SRC="${SRC:-$REPO_ROOT}"
+DEST="${DEST:-$HOME/vectorgov-t-build}"
 
 echo "=== Copiando source pra $DEST (excluindo node_modules/.next/.git) ==="
 mkdir -p "$DEST"
