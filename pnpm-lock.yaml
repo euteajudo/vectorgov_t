@@ -15,6 +15,22 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  apps/ingestion-api:
+    dependencies:
+      '@cloudflare/containers':
+        specifier: ^0.3.4
+        version: 0.3.4
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20251201.0
+        version: 4.20260525.1
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      wrangler:
+        specifier: ^4.59.0
+        version: 4.94.0(@cloudflare/workers-types@4.20260525.1)
+
   apps/mcp-server:
     dependencies:
       '@ai-sdk/google':
@@ -154,6 +170,9 @@ packages:
 
   '@cfworker/json-schema@4.1.1':
     resolution: {integrity: sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og==}
+
+  '@cloudflare/containers@0.3.4':
+    resolution: {integrity: sha512-6kWodmgBSug/rr9fjcWrZcKhxmWTEc1BTKC6nVv7yvYaRRvV3rZPZjq9R17eN0l9cl2LNc03wp/Z6OV+0uDwXA==}
 
   '@cloudflare/kv-asset-handler@0.5.0':
     resolution: {integrity: sha512-jxQYkj8dSIzc0cD6cMMNdOc1UVjqSqu8BZdor5s8cGjW2I8BjODt/kWPVdY+u9zj3ms75Q5qaZgnxUad83+eAg==}
@@ -1977,6 +1996,8 @@ snapshots:
   '@babel/runtime@7.29.7': {}
 
   '@cfworker/json-schema@4.1.1': {}
+
+  '@cloudflare/containers@0.3.4': {}
 
   '@cloudflare/kv-asset-handler@0.5.0': {}
 

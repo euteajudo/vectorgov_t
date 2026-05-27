@@ -1,0 +1,25 @@
+name = "vectorgov-t-ingestion"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+account_id = "a89dbdb0224cd8d2292cda8a038bc297"
+
+# Container Cloudflare que roda o LegisParser (Python + FastAPI)
+[[containers]]
+class_name = "IngestionContainer"
+image = "./Dockerfile"
+instance_type = "basic"  # 1 vCPU, 1 GiB RAM, 4 GB disk
+max_instances = 3
+
+# Durable Object binding — necessário para Containers
+[[durable_objects.bindings]]
+name = "INGESTION"
+class_name = "IngestionContainer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["IngestionContainer"]
+
+[observability]
+enabled = true

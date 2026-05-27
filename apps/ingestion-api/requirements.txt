@@ -1,26 +1,18 @@
-# Vectorgov_t — Ingestion API (Container Python)
-# Parser de legislação brasileira + endpoint HTTP
+# Vectorgov-t - Ingestion API (Container Python)
+# Parser de legislacao brasileira + endpoint HTTP
 
 # HTTP framework
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
-
-# Validação e structured outputs
-pydantic>=2.9.0
-instructor>=1.7.0
-
-# Parsing de PDFs
-pdfplumber>=0.11.0
-lxml>=5.3.0
-beautifulsoup4>=4.12.0
-
-# LLM client (para validação estruturada do parser)
-google-generativeai>=0.8.0
-
-# Utilities
 python-multipart>=0.0.18
-httpx>=0.28.0
 
-# Dev
+# Validacao e schemas
+pydantic>=2.9.0
+
+# Parsing de PDFs (deterministico, sem OCR)
+PyMuPDF>=1.24.0
+
+# Dev / Tests
 pytest>=8.3.0
 pytest-asyncio>=0.24.0
+httpx>=0.28.0  # usado pelo TestClient do FastAPI
