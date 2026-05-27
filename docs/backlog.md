@@ -13,7 +13,7 @@ Snapshot do estado real do projeto. Atualizado em 2026-05-27.
 | F0 — Setup | Conta, wrangler, monorepo, secrets, estrutura | Concluída |
 | F1 — Infraestrutura | Vectorize, R2, D1, KV, Container, bindings | Concluída |
 | F2 — Componentes core | Tools MCP, sistema de skills, parser, agentes | Concluída |
-| F3 — Frontend | Next.js, rotas, integração API | Concluída (deploy Pages diferido) |
+| F3 — Frontend | Next.js, rotas, integração API | Concluída — UI em https://vectorgov-t-web-ui.souzat19.workers.dev |
 | F4 — Integração end-to-end | Pipeline orquestrador → tools → agentes; handshake MCP corrigido | Concluída |
 | F5 — Hardening + Demo | Tracks J (hardening), K (demo), L (docs) | Concluída — review final aplicado |
 
@@ -82,15 +82,15 @@ Não há PDF baixado, nem chamada de `/ingestao/iniciar` registrada. Próxima no
 
 ## Próximos itens (não bloqueados)
 
-1. **Deploy do frontend para Cloudflare Pages.** Hoje só roda local. Detalhes em [`deployment.md`](./deployment.md) §12.
-2. **Plug do motor PEVS real** em `POST /api/peticoes/upload`. Hoje usa `simularPipeline` que avança as fases sem chamar agentes. TODO marcado em `apps/mcp-server/src/api/peticoes.ts`.
-3. **Golden set no CI.** Hoje roda manualmente (`node test/golden-set/run-golden-set.mjs`). Adicionar GitHub Action que rode em PRs e bloqueie merge se quebrar veredito ou score.
-4. **Dashboard de observability.** Centralizar métricas de uso de tools, latência por fase do PEVS, taxa de aprovação do Auditor, custo por petição.
-5. **Routing A/B 90/10** para skills candidate. Hoje toda análise usa `active`. Ver [`skills-guide.md`](./skills-guide.md) §6.
-6. **Histórico de versões de skills.** Mover automaticamente versão anterior para `archive/` quando promover nova `active`. Hoje é manual.
-7. **Persistência de petições em D1.** Hoje vivem só no KV com TTL 24h (`peticao:<id>`). Migrar para tabela SQL quando volume justificar.
-8. **Cota e budget cap operacionais.** O design prevê `Budget cap $50/mês` ([`arquitetura.md`](./arquitetura.md)) — falta enforcement real.
-9. **Documentação de webhooks.** Não existem hoje; planejado para integrações com sistemas de protocolo (Pencil, SEI etc.).
+1. **Plug do motor PEVS real** em `POST /api/peticoes/upload`. Hoje usa `simularPipeline` que avança as fases sem chamar agentes. TODO marcado em `apps/mcp-server/src/api/peticoes.ts`.
+2. **Golden set no CI.** Hoje roda manualmente (`node test/golden-set/run-golden-set.mjs`). Adicionar GitHub Action que rode em PRs e bloqueie merge se quebrar veredito ou score.
+3. **Dashboard de observability.** Centralizar métricas de uso de tools, latência por fase do PEVS, taxa de aprovação do Auditor, custo por petição.
+4. **Routing A/B 90/10** para skills candidate. Hoje toda análise usa `active`. Ver [`skills-guide.md`](./skills-guide.md) §6.
+5. **Histórico de versões de skills.** Mover automaticamente versão anterior para `archive/` quando promover nova `active`. Hoje é manual.
+6. **Persistência de petições em D1.** Hoje vivem só no KV com TTL 24h (`peticao:<id>`). Migrar para tabela SQL quando volume justificar.
+7. **Cota e budget cap operacionais.** O design prevê `Budget cap $50/mês` ([`arquitetura.md`](./arquitetura.md)) — falta enforcement real.
+8. **Documentação de webhooks.** Não existem hoje; planejado para integrações com sistemas de protocolo (Pencil, SEI etc.).
+9. **Durable Object Alarms ou Queue para ingestão assíncrona.** Hoje a UI passa `?sync=true` e fica bloqueada no upload por falta de driver de background real (limite do `ctx.waitUntil`). Resolve a UX de progresso em tempo real.
 
 ---
 
@@ -98,7 +98,7 @@ Não há PDF baixado, nem chamada de `/ingestao/iniciar` registrada. Próxima no
 
 - LC 214 indexada (issue #54 resolvida).
 - Decreto 12.955 indexado.
-- Frontend deployado em Pages com URL pública.
+- Frontend deployado em produção (✓ https://vectorgov-t-web-ui.souzat19.workers.dev — Worker via OpenNext).
 - Golden set verde em CI.
 - Promoção de skills via UI reabilitada (#52).
 - Demo ponta a ponta ensaiada com `docs/demo-roteiro.md`.
