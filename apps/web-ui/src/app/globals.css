@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+/**
+ * Tema VectorGov_t — paleta institucional jurídica.
+ *
+ * Cores escolhidas para transmitir seriedade (azul-marinho), confiabilidade
+ * (cinzas neutros) e ação positiva (verde para APROVADO / PROCEDENTE).
+ * Vermelho reservado para REJEITADO / IMPROCEDENTE.
+ *
+ * Variáveis seguem padrão shadcn/ui (CSS variables com formato HSL para
+ * permitir alpha-blend via Tailwind v4).
+ */
+@theme {
+  --color-background: #fafafa;
+  --color-foreground: #0a0a0a;
+  --color-card: #ffffff;
+  --color-card-foreground: #0a0a0a;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #0a0a0a;
+  --color-primary: #1e3a8a;
+  --color-primary-foreground: #fafafa;
+  --color-secondary: #f1f5f9;
+  --color-secondary-foreground: #0f172a;
+  --color-muted: #f1f5f9;
+  --color-muted-foreground: #64748b;
+  --color-accent: #e2e8f0;
+  --color-accent-foreground: #0f172a;
+  --color-destructive: #dc2626;
+  --color-destructive-foreground: #fafafa;
+  --color-success: #16a34a;
+  --color-success-foreground: #fafafa;
+  --color-warning: #f59e0b;
+  --color-warning-foreground: #1c1917;
+  --color-border: #e2e8f0;
+  --color-input: #e2e8f0;
+  --color-ring: #1e3a8a;
+  --radius: 0.5rem;
+}
+
+/* Reset mínimo + estilos globais. */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu,
+    Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Scrollbar estilizada (Webkit). */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted-foreground);
+}
