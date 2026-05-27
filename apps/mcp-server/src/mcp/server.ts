@@ -1,16 +1,16 @@
 /**
- * Handler MCP base — implementa o subset JSON-RPC 2.0 necessário
- * para `tools/list` e `tools/call`.
+ * Handler MCP — implementa o subset JSON-RPC 2.0 com tools reais (F2.D).
  *
- * Nesta fase (F1.C.2) o servidor apenas responde:
- *  - `tools/list` → `{ tools: [] }` (registro vazio; F2 adicionará tools).
- *  - `tools/call` → erro `-32601` ("Tool not found") porque ainda não há tools.
+ * Métodos suportados:
+ *  - `tools/list` → catálogo de 9 tools (`MCP_TOOLS`).
+ *  - `tools/call` → dispatch para o handler da tool (resposta MCP envelope
+ *    `{ content: [{ type: 'text', text }], isError? }`).
  *
  * Códigos de erro JSON-RPC seguidos:
  *  - `-32700` Parse error (corpo inválido).
  *  - `-32600` Invalid Request (envelope JSON-RPC ausente / malformado).
  *  - `-32601` Method not found (método não suportado ou tool inexistente).
- *  - `-32602` Invalid params (parâmetros faltando / mal tipados).
+ *  - `-32602` Invalid params (parâmetros faltando / mal tipados ou validação Zod).
  *  - `-32603` Internal error (exceção inesperada do servidor).
  */
 
@@ -21,12 +21,10 @@ import {
   jsonRpcSuccess,
   type JsonRpcId,
 } from "../lib/responses.js";
+import { MCP_TOOLS, findTool, ToolValidationError } from "./tools/index.js";
 
 /**
  * Estrutura mínima de uma requisição JSON-RPC 2.0.
- *
- * `id` é opcional na spec (omissão indica notificação), mas neste handler
- * tratamos qualquer requisição sem `id` como `null` para simplificar.
  */
 interface JsonRpcRequest {
   jsonrpc?: string;
@@ -36,14 +34,13 @@ interface JsonRpcRequest {
 }
 
 /**
- * Resultado de `tools/list`. Futuro: array de descritores de tools com
- * `name`, `description` e `inputSchema` (JSON Schema).
+ * Resultado de `tools/list`. Array de descritores serializáveis (sem `handler`).
  */
 interface ToolsListResult {
   tools: Array<{
     name: string;
-    description?: string;
-    inputSchema?: unknown;
+    description: string;
+    inputSchema: Record<string, unknown>;
   }>;
 }
 
@@ -56,6 +53,17 @@ interface ToolsCallParams {
 }
 
 /**
+ * Envelope MCP de resposta de tool — texto serializado em JSON.
+ *
+ * Spec MCP: `content: [{ type: 'text', text: string }]`. Para tools
+ * estruturadas, embrulhamos o `result` em JSON.stringify.
+ */
+interface ToolCallEnvelope {
+  content: Array<{ type: "text"; text: string }>;
+  isError?: boolean;
+}
+
+/**
  * Type guard: verifica se o body parseado é um objeto não-array.
  */
 function isObjectLike(value: unknown): value is Record<string, unknown> {
@@ -63,8 +71,7 @@ function isObjectLike(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Extrai o ID da requisição de forma defensiva (sempre devolvendo
- * um `JsonRpcId` válido para que mesmo respostas de erro tenham `id`).
+ * Extrai o ID da requisição de forma defensiva.
  */
 function extractId(raw: unknown): JsonRpcId {
   if (raw === null) return null;
@@ -73,25 +80,55 @@ function extractId(raw: unknown): JsonRpcId {
 }
 
 /**
- * Roteia o método JSON-RPC para o handler apropriado.
+ * Monta o envelope MCP de sucesso para `tools/call`.
+ */
+function toolEnvelope(result: unknown): ToolCallEnvelope {
+  return {
+    content: [{ type: "text", text: JSON.stringify(result) }],
+  };
+}
+
+/**
+ * Monta o envelope MCP de erro para `tools/call` (devolvido como resultado
+ * "ok" no envelope JSON-RPC com `isError: true`, conforme spec MCP).
+ */
+function toolErrorEnvelope(message: string, details?: unknown): ToolCallEnvelope {
+  const payload = details ? { error: message, details } : { error: message };
+  return {
+    content: [{ type: "text", text: JSON.stringify(payload) }],
+    isError: true,
+  };
+}
+
+/**
+ * Catálogo de tools serializável — derivado de `MCP_TOOLS`.
  *
- * Mantemos a tabela de métodos pequena e explícita: qualquer expansão
- * (notifications, ping, resources) deve adicionar um `case` aqui.
+ * Calculado uma vez por isolate (módulo carregado uma só vez) para evitar
+ * re-renderizar JSON Schema em toda chamada `tools/list`.
+ */
+const TOOLS_CATALOG: ToolsListResult = {
+  tools: MCP_TOOLS.map((t) => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+  })),
+};
+
+/**
+ * Roteia o método JSON-RPC para o handler apropriado.
  */
 async function dispatch(
   method: string,
   params: unknown,
   id: JsonRpcId,
-  _env: Env,
+  env: Env,
 ): Promise<ReturnType<typeof jsonRpcSuccess> | ReturnType<typeof jsonRpcError>> {
   switch (method) {
     case "tools/list": {
-      const result: ToolsListResult = { tools: [] };
-      return jsonRpcSuccess(id, result);
+      return jsonRpcSuccess(id, TOOLS_CATALOG);
     }
+
     case "tools/call": {
-      // Validação mínima de params — protege contra payloads malformados
-      // mesmo sem nenhuma tool cadastrada.
       if (!isObjectLike(params)) {
         return jsonRpcError(
           id,
@@ -107,13 +144,30 @@ async function dispatch(
           "Invalid params: 'name' (string) é obrigatório",
         );
       }
-      // Nenhuma tool cadastrada ainda — F2 implementa o registry real.
-      return jsonRpcError(
-        id,
-        -32601,
-        `Tool not found: ${callParams.name}`,
-      );
+      const tool = findTool(callParams.name);
+      if (!tool) {
+        return jsonRpcError(id, -32601, `Tool not found: ${callParams.name}`);
+      }
+
+      // Dispatch — wrap em try/catch para distinguir validação x runtime.
+      try {
+        const args = callParams.arguments ?? {};
+        const result = await tool.handler(args, env);
+        return jsonRpcSuccess(id, toolEnvelope(result));
+      } catch (err) {
+        if (err instanceof ToolValidationError) {
+          // Validation error → ainda é envelope MCP com `isError`, mas o
+          // JSON-RPC envelope é success (spec MCP separa erro semântico).
+          return jsonRpcSuccess(
+            id,
+            toolErrorEnvelope(err.message, err.details),
+          );
+        }
+        const msg = err instanceof Error ? err.message : "tool execution failed";
+        return jsonRpcError(id, -32603, "Internal error", { reason: msg });
+      }
     }
+
     default: {
       return jsonRpcError(id, -32601, `Method not found: ${method}`);
     }
@@ -122,12 +176,6 @@ async function dispatch(
 
 /**
  * Handler HTTP do endpoint `POST /mcp/v1`.
- *
- * Responsabilidades:
- *  1. Parsear o corpo JSON com tratamento de erro (-32700).
- *  2. Validar envelope JSON-RPC (-32600).
- *  3. Dispachar pelo método (-32601 quando desconhecido).
- *  4. Encapsular qualquer exceção como erro interno (-32603).
  */
 export async function handleMcp(request: Request, env: Env): Promise<Response> {
   let body: unknown;
