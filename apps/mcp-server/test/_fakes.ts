@@ -2,30 +2,28 @@
  * Fakes mínimos dos bindings Cloudflare usados pelo Worker em ambiente
  * de teste (vitest rodando em Node puro).
  *
- * Cobre a superfície usada pelos handlers atuais:
- *   - `CACHE` (KVNamespace): `get`, `put`, `delete`.
- *   - `AI`: stub determinístico do embedding bge-m3 (gera vetores 1024 dim).
- *   - `R2_LEIS` / `R2_SKILLS`: bucket em memória com `put`/`get`/`list`/`delete`.
- *   - `DB` (D1): wrapper em cima de Map em memória com `prepare`/`bind`/`run`/`all`/`batch`.
- *   - `VECTORIZE`: registro de IDs em Map para upsert/deleteByIds.
+ * Combina as APIs introduzidas pelas Tracks D (tools MCP) e G (pipeline):
+ *   - APIs com options (D): `createFakeAi({embedding, responses})`,
+ *     `createFakeR2(initial)`, `createFakeD1({rules})`,
+ *     `createFakeVectorize({matches})`.
+ *   - APIs com state introspection (G): `createFakeAi()` → `FakeAi`,
+ *     `createFakeR2Bucket()` → `FakeR2Bucket`, `createFakeD1()` → `FakeD1Database`,
+ *     `createFakeVectorize()` → `FakeVectorize`.
  *
- * O foco dos fakes é assertabilidade — eles guardam estado interno acessível
- * via getters (`getStored*`) para os testes verificarem o que foi gravado.
+ * Os fakes preservam "fail-fast" via `unusedBinding()`: qualquer binding não
+ * configurado em uma suíte explode no acesso para deixar claro que o handler
+ * está vazando dependência indevida.
  */
 
 import type { Env } from "../src/env.js";
 
-/**
- * Fake do KV em memória — suficiente para testar rate-limit + cache wrapper.
- *
- * Implementa as duas formas de `get` usadas pelo código: string padrão
- * (no rate-limit) e `"json"` (no cache wrapper). Demais sobrecargas
- * (`"arrayBuffer"`, `"stream"`) caem no `default` que arremessa.
- */
+// ============================================================================
+// KV
+// ============================================================================
+
 export function createFakeKv(): KVNamespace {
   const store = new Map<string, string>();
 
-  // Função `get` polimórfica — cobre as sobrecargas string e "json".
   async function get(
     key: string,
     typeOrOptions?: unknown,
@@ -69,31 +67,17 @@ export function createFakeKv(): KVNamespace {
   return kv as KVNamespace;
 }
 
-/**
- * Builder genérico para um binding "explosivo" — qualquer acesso lança.
- * Útil quando o handler em teste não deveria tocar aquele binding.
- */
-function unusedBinding<T>(name: string): T {
-  return new Proxy(
-    {},
-    {
-      get(): never {
-        throw new Error(`Binding '${name}' acessado em teste sem fake configurado`);
-      },
-    },
-  ) as T;
+// ============================================================================
+// AI (Workers AI) — versão unificada
+// ============================================================================
+
+export interface FakeAiOptions {
+  /** Embedding fixo (1024 dims) para retornar quando bge-m3 for chamado. */
+  embedding?: number[];
+  /** Map de respostas por nome de modelo (override completo). */
+  responses?: Record<string, unknown>;
 }
 
-// ============================================================================
-// Fake AI (Workers AI)
-// ============================================================================
-
-/**
- * Stub do `env.AI` — só responde para o modelo bge-m3 com vetores
- * determinísticos (1024 dim, valores derivados do hash do texto).
- *
- * O guardião `failOnNthCall` permite forçar erros para testar retry.
- */
 export interface FakeAi extends Ai {
   callCount: number;
   failOnCalls: Set<number>;
@@ -115,7 +99,8 @@ function simpleHash(s: string): number {
  * Gera um vetor "embedding" determinístico baseado no hash do texto.
  * Não é semântico — só serve para testes assertarem ordem/dimensão.
  */
-function fakeEmbedding(text: string): number[] {
+function fakeEmbedding(text: string, fallback?: number[]): number[] {
+  if (fallback) return fallback;
   const seed = simpleHash(text);
   const vec: number[] = new Array(1024);
   for (let i = 0; i < 1024; i++) {
@@ -124,7 +109,7 @@ function fakeEmbedding(text: string): number[] {
   return vec;
 }
 
-export function createFakeAi(): FakeAi {
+export function createFakeAi(opts: FakeAiOptions = {}): FakeAi {
   const state = {
     callCount: 0,
     failOnCalls: new Set<number>(),
@@ -135,24 +120,140 @@ export function createFakeAi(): FakeAi {
     callCount: 0,
     failOnCalls: state.failOnCalls,
     textsSeen: state.textsSeen,
-    async run(_model: string, params: unknown): Promise<unknown> {
+    async run(model: string, params: unknown): Promise<unknown> {
       state.callCount += 1;
       (ai as { callCount: number }).callCount = state.callCount;
-      const p = params as { text: string[] };
-      state.textsSeen.push([...p.text]);
+
+      // Override por modelo (versão D)
+      if (opts.responses && model in opts.responses) {
+        return opts.responses[model];
+      }
+
+      const p = params as { text?: string[] };
+      const texts = p?.text ?? [];
+      state.textsSeen.push([...texts]);
+
       if (state.failOnCalls.has(state.callCount)) {
         throw new Error(`fake AI failure on call ${state.callCount}`);
       }
-      const data = p.text.map((t) => fakeEmbedding(t));
-      return { shape: [data.length, 1024], data };
+
+      if (model.includes("bge-m3")) {
+        const data = texts.map((t) => fakeEmbedding(t, opts.embedding));
+        return { shape: [data.length, 1024], data };
+      }
+      if (model.includes("reranker")) {
+        return {
+          response: [
+            { id: 0, score: 0.95 },
+            { id: 1, score: 0.7 },
+          ],
+        };
+      }
+      return {};
     },
   } as unknown as FakeAi;
   return ai;
 }
 
 // ============================================================================
-// Fake R2 Bucket
+// Vectorize — versão unificada
 // ============================================================================
+
+export interface FakeVectorizeOptions {
+  matches?: Array<{
+    id: string;
+    score: number;
+    metadata?: Record<string, unknown>;
+  }>;
+}
+
+export interface FakeVectorize extends VectorizeIndex {
+  vectors: Map<string, { values: number[]; metadata: Record<string, unknown> }>;
+  upsertCount: number;
+  deleteCount: number;
+}
+
+export function createFakeVectorize(opts: FakeVectorizeOptions = {}): FakeVectorize {
+  const vectors = new Map<string, { values: number[]; metadata: Record<string, unknown> }>();
+  const counters = { upsertCount: 0, deleteCount: 0 };
+
+  const idx = {
+    vectors,
+    get upsertCount(): number {
+      return counters.upsertCount;
+    },
+    get deleteCount(): number {
+      return counters.deleteCount;
+    },
+    async upsert(
+      items: { id: string; values: number[]; metadata?: Record<string, unknown> }[],
+    ): Promise<unknown> {
+      counters.upsertCount += 1;
+      for (const v of items) {
+        vectors.set(v.id, { values: v.values, metadata: v.metadata ?? {} });
+      }
+      return { count: items.length };
+    },
+    async deleteByIds(ids: string[]): Promise<unknown> {
+      counters.deleteCount += 1;
+      for (const id of ids) vectors.delete(id);
+      return { count: ids.length };
+    },
+    async query(
+      _vector: number[] | Float32Array,
+      _options?: VectorizeQueryOptions,
+    ): Promise<{ matches: NonNullable<FakeVectorizeOptions["matches"]> }> {
+      return { matches: opts.matches ?? [] };
+    },
+    async insert(): Promise<unknown> {
+      return { count: 0 };
+    },
+    async getByIds(): Promise<unknown> {
+      return [];
+    },
+    async describe(): Promise<unknown> {
+      return { dimensions: 1024, vectorsCount: vectors.size };
+    },
+  } as unknown as FakeVectorize;
+  return idx;
+}
+
+// ============================================================================
+// R2 — duas APIs (simples + state)
+// ============================================================================
+
+/**
+ * R2 simples (versão D): só `get`/`put`/`delete`. Sem state introspection.
+ */
+export function createFakeR2(initial: Record<string, unknown> = {}): R2Bucket {
+  const store = new Map<string, string>();
+  for (const [k, v] of Object.entries(initial)) {
+    store.set(k, typeof v === "string" ? v : JSON.stringify(v));
+  }
+
+  const bucket = {
+    async get(key: string): Promise<R2ObjectBody | null> {
+      const raw = store.get(key);
+      if (raw === undefined) return null;
+      const body = {
+        async json<T>(): Promise<T> {
+          return JSON.parse(raw) as T;
+        },
+        async text(): Promise<string> {
+          return raw;
+        },
+      };
+      return body as unknown as R2ObjectBody;
+    },
+    async put(key: string, value: string): Promise<void> {
+      store.set(key, value);
+    },
+    async delete(key: string): Promise<void> {
+      store.delete(key);
+    },
+  };
+  return bucket as unknown as R2Bucket;
+}
 
 interface FakeR2Object {
   key: string;
@@ -185,10 +286,12 @@ async function bodyToArrayBuffer(
       body.byteOffset + body.byteLength,
     ) as ArrayBuffer;
   }
-  // ReadableStream — não usado nos testes.
-  throw new Error("createFakeR2: ReadableStream não suportado em testes");
+  throw new Error("createFakeR2Bucket: ReadableStream não suportado em testes");
 }
 
+/**
+ * R2 com state (versão G): mantém store, putCount, deleteCount acessíveis.
+ */
 export function createFakeR2Bucket(): FakeR2Bucket {
   const store = new Map<string, FakeR2Object>();
   const counters = { putCount: 0, deleteCount: 0 };
@@ -272,8 +375,21 @@ export function createFakeR2Bucket(): FakeR2Bucket {
 }
 
 // ============================================================================
-// Fake D1 Database
+// D1 — duas APIs (rule-based + state)
 // ============================================================================
+
+export interface FakeD1Options {
+  /**
+   * Lista de "regras": cada regra casa por substring no SQL e devolve linhas.
+   * Avaliada na ordem; a primeira regra que casar é usada.
+   * Quando dado, usa o motor rule-based (versão D).
+   * Quando ausente, usa o motor com state (versão G).
+   */
+  rules?: Array<{
+    match: string | RegExp;
+    rows: unknown[];
+  }>;
+}
 
 export interface FakeD1Database extends D1Database {
   state: {
@@ -285,21 +401,66 @@ export interface FakeD1Database extends D1Database {
   batchCount: number;
 }
 
-/**
- * D1 fake mínimo — entende um subset de SQL específico do orchestrator.
- *
- * Não é um parser SQL completo; reconhece os comandos exatos usados:
- *   - INSERT INTO normas (...)
- *   - INSERT INTO dispositivos (...)
- *   - INSERT INTO versoes_dispositivos (...)
- *   - INSERT INTO dispositivos_fts (...)
- *   - DELETE FROM normas/dispositivos/versoes_dispositivos/dispositivos_fts WHERE ...
- *   - SELECT id FROM dispositivos WHERE norma_id = ?
- *
- * Qualquer outro SQL devolve resultado vazio (não arremessa — preserva
- * idempotência do purge).
- */
-export function createFakeD1(): FakeD1Database {
+export function createFakeD1(opts: FakeD1Options = {}): FakeD1Database {
+  // Modo rule-based (versão D)
+  if (opts.rules) {
+    function matchRows(sql: string): unknown[] {
+      for (const r of opts.rules ?? []) {
+        if (typeof r.match === "string" && sql.includes(r.match)) return r.rows;
+        if (r.match instanceof RegExp && r.match.test(sql)) return r.rows;
+      }
+      return [];
+    }
+    const stmt = (sql: string) => {
+      const _bound: unknown[] = [];
+      const prepared = {
+        bind(...args: unknown[]) {
+          _bound.push(...args);
+          return prepared;
+        },
+        async first<T>(): Promise<T | null> {
+          const rows = matchRows(sql);
+          return (rows[0] as T | undefined) ?? null;
+        },
+        async all<T>(): Promise<{ results: T[] }> {
+          return { results: matchRows(sql) as T[] };
+        },
+        async run(): Promise<{ success: true }> {
+          return { success: true };
+        },
+        async raw<T>(): Promise<T[]> {
+          return matchRows(sql) as T[];
+        },
+      };
+      return prepared as unknown as D1PreparedStatement;
+    };
+    const db = {
+      state: {
+        normas: new Map(),
+        dispositivos: new Map(),
+        versoes: [],
+        fts: [],
+      },
+      batchCount: 0,
+      prepare(sql: string) {
+        return stmt(sql);
+      },
+      async batch(stmts: D1PreparedStatement[]): Promise<D1Result[]> {
+        const results: D1Result[] = [];
+        for (const s of stmts) {
+          await s.run();
+          results.push({ success: true, meta: { duration: 0 } } as unknown as D1Result);
+        }
+        return results;
+      },
+      async exec(): Promise<D1ExecResult> {
+        return { count: 0, duration: 0 } as unknown as D1ExecResult;
+      },
+    } as unknown as FakeD1Database;
+    return db;
+  }
+
+  // Modo com state (versão G)
   const state = {
     normas: new Map<string, Record<string, unknown>>(),
     dispositivos: new Map<string, Record<string, unknown>>(),
@@ -423,66 +584,43 @@ export function createFakeD1(): FakeD1Database {
 }
 
 // ============================================================================
-// Fake Vectorize
+// Env helpers
 // ============================================================================
 
-export interface FakeVectorize extends VectorizeIndex {
-  vectors: Map<string, { values: number[]; metadata: Record<string, unknown> }>;
-  upsertCount: number;
-  deleteCount: number;
+function unusedBinding<T>(name: string): T {
+  return new Proxy(
+    {},
+    {
+      get(): never {
+        throw new Error(`Binding '${name}' acessado em teste sem fake configurado`);
+      },
+    },
+  ) as T;
 }
 
-export function createFakeVectorize(): FakeVectorize {
-  const vectors = new Map<string, { values: number[]; metadata: Record<string, unknown> }>();
-  const counters = { upsertCount: 0, deleteCount: 0 };
-
-  const idx = {
-    vectors,
-    get upsertCount(): number {
-      return counters.upsertCount;
-    },
-    get deleteCount(): number {
-      return counters.deleteCount;
-    },
-    async upsert(items: { id: string; values: number[]; metadata?: Record<string, unknown> }[]): Promise<unknown> {
-      counters.upsertCount += 1;
-      for (const v of items) {
-        vectors.set(v.id, { values: v.values, metadata: v.metadata ?? {} });
-      }
-      return { count: items.length };
-    },
-    async deleteByIds(ids: string[]): Promise<unknown> {
-      counters.deleteCount += 1;
-      for (const id of ids) vectors.delete(id);
-      return { count: ids.length };
-    },
-    async query(): Promise<unknown> {
-      return { matches: [] };
-    },
-    async insert(): Promise<unknown> {
-      return { count: 0 };
-    },
-    async getByIds(): Promise<unknown> {
-      return [];
-    },
-    async describe(): Promise<unknown> {
-      return { dimensions: 1024, vectorsCount: vectors.size };
-    },
-  } as unknown as FakeVectorize;
-  return idx;
+export interface TestEnvOverrides {
+  AI?: Ai;
+  VECTORIZE?: VectorizeIndex;
+  R2_LEIS?: R2Bucket;
+  R2_SKILLS?: R2Bucket;
+  DB?: D1Database;
+  CACHE?: KVNamespace;
 }
 
 /**
  * Monta um `Env` de teste com KV real (in-memory) e demais bindings inertes.
+ *
+ * Passe `overrides` para configurar individualmente (ex.: ao testar
+ * tools que falam com R2/D1/AI/VECTORIZE).
  */
-export function createTestEnv(): Env {
+export function createTestEnv(overrides: TestEnvOverrides = {}): Env {
   return {
-    AI: unusedBinding<Ai>("AI"),
-    VECTORIZE: unusedBinding<VectorizeIndex>("VECTORIZE"),
-    R2_LEIS: unusedBinding<R2Bucket>("R2_LEIS"),
-    R2_SKILLS: unusedBinding<R2Bucket>("R2_SKILLS"),
-    DB: unusedBinding<D1Database>("DB"),
-    CACHE: createFakeKv(),
+    AI: overrides.AI ?? unusedBinding<Ai>("AI"),
+    VECTORIZE: overrides.VECTORIZE ?? unusedBinding<VectorizeIndex>("VECTORIZE"),
+    R2_LEIS: overrides.R2_LEIS ?? unusedBinding<R2Bucket>("R2_LEIS"),
+    R2_SKILLS: overrides.R2_SKILLS ?? unusedBinding<R2Bucket>("R2_SKILLS"),
+    DB: overrides.DB ?? unusedBinding<D1Database>("DB"),
+    CACHE: overrides.CACHE ?? createFakeKv(),
   };
 }
 
@@ -490,8 +628,8 @@ export function createTestEnv(): Env {
  * Variante de `createTestEnv()` com TODOS os bindings ativos (in-memory).
  * Use nos testes do orchestrator/pipeline que tocam R2/D1/Vectorize/AI.
  *
- * Também aceita um secret de Container Python para evitar que o test
- * exploda em `INGESTION_API_SECRET não configurado`.
+ * Também define `INGESTION_API_SECRET` para evitar que o teste exploda em
+ * "INGESTION_API_SECRET não configurado".
  */
 export function createPipelineEnv(): Env & {
   AI: FakeAi;
@@ -519,7 +657,7 @@ export function createPipelineEnv(): Env & {
 
 /**
  * `ExecutionContext` simulado — `waitUntil` / `passThroughOnException` são
- * no-ops nos testes (não precisamos esperar tarefas em background).
+ * no-ops nos testes.
  */
 export function createExecutionContext(): ExecutionContext {
   return {
