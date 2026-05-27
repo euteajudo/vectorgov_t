@@ -191,7 +191,13 @@ Filtrar por evento:
 NODE_OPTIONS=--use-system-ca wrangler tail vectorgov-t-mcp --search "pipeline_failed"
 NODE_OPTIONS=--use-system-ca wrangler tail vectorgov-t-mcp --search "vectorize_delete_warn"
 NODE_OPTIONS=--use-system-ca wrangler tail vectorgov-t-mcp --search "r2_delete_warn"
+
+# Telemetria de custo (adicionada na F5.1):
+NODE_OPTIONS=--use-system-ca wrangler tail vectorgov-t-mcp --search "analise_completa"
+NODE_OPTIONS=--use-system-ca wrangler tail vectorgov-t-mcp --search "parecer_completo"
 ```
+
+Os eventos `analise_completa` e `parecer_completo` registram `tokens_total`, `custo_estimado_usd`, `chamadas_llm` e breakdown `por_modelo` (Flash/Pro). Útil para auditoria de custo por petição.
 
 ### Campos de diagnóstico
 
@@ -292,7 +298,7 @@ O sistema é projetado para custo **abaixo de $0,50/petição completa** (alvo, 
 | TTL do cache `_meta` de skills | `packages/schemas/src/skills.ts` (`SKILL_KV_TTL_META`) | Reduz reads R2 |
 | TTL do cache de skills individuais | (`SKILL_KV_TTL_SKILL`) | Reduz reads R2 |
 | `BATCH_SIZE` da ingestão | `apps/mcp-server/src/pipeline/orchestrator.ts` | 100 é o teto seguro; reduzir economiza memória mas aumenta subrequests |
-| `R2_CONCURRENCY` | mesmo arquivo | Reduzir desafoga subrequest budget (50 free / 1000 pago) |
+| `R2_CONCURRENCY` (default: **8** após F5.1) | mesmo arquivo, linha 82 | Reduzir desafoga subrequest budget (50 free / 1000 pago) e diminui rate-limit do R2 |
 | Skill compacta | escrever skills < 2000 tokens (ver [`skills-guide.md`](./skills-guide.md)) | Economia direta em tokens de input |
 | `top_k` em `buscar_legislacao` | argumento da tool | Menos chunks lidos do Vectorize |
 
@@ -302,7 +308,7 @@ Modelo: o agente Auditor usa Gemini 3 Pro (caro). Trocar por Flash compromete a 
 
 ## 9. Limites conhecidos
 
-- **Ingestão de normas grandes (> 4.000 dispositivos)** sofre rate limit R2 durante upload paralelo dos `.md` por dispositivo. Sintoma: warnings `r2_delete_warn` ou falhas intermitentes em `fase=markdown`. Issue rastreada em **task #54** (ver [`backlog.md`](./backlog.md)). Workaround: reduzir `R2_CONCURRENCY` no orchestrator e re-ingerir.
+- **Ingestão de normas grandes (> 4.000 dispositivos)** sofreu rate limit R2 historicamente. F5.1 reduziu `R2_CONCURRENCY` para 8 e adicionou `withR2Retry` (backoff + jitter). LC 214 deve concluir em ~6-8min em vez de falhar. Issue rastreada em **task #54** como "parcialmente resolvida — aguarda validação em produção" (ver [`backlog.md`](./backlog.md)). Se ainda falhar, reduzir `R2_CONCURRENCY` para 5 em `apps/mcp-server/src/pipeline/orchestrator.ts:82` e re-ingerir.
 - **Worker timeout**: 30s para requisições síncronas, 15min para tarefas em `ctx.waitUntil`. O pipeline de ingestão é todo `waitUntil`, então não bate o limite. Análise de petição (Feature 1) também é assíncrona via background task.
 - **D1 batch**: máximo 100 statements por `batch()`. O orquestrador respeita esse teto dividindo em `dispBatchSize = BATCH_SIZE/3`.
 - **Workers AI**: limite diário de neurônios depende do plano. Free tier suficiente para demo; produção exige plano Workers Paid.

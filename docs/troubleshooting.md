@@ -26,11 +26,15 @@ deve retornar email + account ID.
 
 **Sintoma:** chamadas a `/mcp/v1` ou `/api/*` começam a falhar com 429 após várias requisições rápidas do mesmo IP.
 
-**Causa:** rate limit de 60 req/min/IP implementado em `apps/mcp-server/src/lib/rate-limit.ts`.
+**Causa:** rate limit em duas dimensões (implementado em `apps/mcp-server/src/lib/rate-limit.ts`):
+- **60 req/min/IP** (janela curta)
+- **500 req/dia/IP** (cota diária — adicionada na F5.1)
 
-**Solução curta:** esperar 60 s. Em desenvolvimento, considere distribuir testes ao longo do tempo.
+O response 429 inclui header `X-RateLimit-Scope: minute|day` para identificar qual dimensão estourou.
 
-**Solução longa:** ajustar limite em `rate-limit.ts` se o caso de uso legítimo exigir mais. Cuidado: o limite existe para conter abuso e proteger budget cap.
+**Solução curta:** se `X-RateLimit-Scope: minute`, esperar 60 s. Se `X-RateLimit-Scope: day`, esperar até a virada do dia UTC. Em desenvolvimento, considere distribuir testes ao longo do tempo.
+
+**Solução longa:** ajustar `DEFAULT_LIMIT_PER_MINUTE` ou `DEFAULT_LIMIT_PER_DAY` em `rate-limit.ts` se o caso de uso legítimo exigir mais. O limite existe para conter abuso e proteger o consumo de Gemini/Workers AI (budget cap mensal ainda é planejado — ver [`backlog.md`](./backlog.md)).
 
 ---
 
@@ -88,12 +92,15 @@ Re-ingerir a norma após reset — o purge idempotente cuida da limpeza prévia.
 
 **Sintoma:** logs com `event: r2_delete_warn` ou `event: pipeline_failed` durante upload paralelo dos `.md` por dispositivo.
 
-**Causa:** rate limit do R2 (Class A operations) quando `R2_CONCURRENCY=20` em norma com 4000+ dispositivos. Issue rastreada como **task #54** no [`backlog.md`](./backlog.md).
+**Causa:** rate limit do R2 (Class A operations) em norma com 4000+ dispositivos. Issue rastreada como **task #54** no [`backlog.md`](./backlog.md).
 
-**Workaround:**
-1. Reduzir `R2_CONCURRENCY` em `apps/mcp-server/src/pipeline/orchestrator.ts` de 20 para 5.
+**Estado atual (pós-F5.1):** `R2_CONCURRENCY` já reduzido para 8 e `withR2Retry` aplicado em todos os puts R2 com backoff exponencial + jitter. LC 214 deve concluir em ~6-8min em vez de falhar. Aguarda validação em produção.
+
+**Se persistir após F5.1:**
+1. Reduzir `R2_CONCURRENCY` em `apps/mcp-server/src/pipeline/orchestrator.ts:82` de 8 para 5.
 2. Redeploy do Worker MCP.
 3. Re-ingerir a norma.
+4. Inspecionar logs por `withR2Retry:put:<key>:retry` para identificar quais keys estão sofrendo mais retries.
 
 ---
 
