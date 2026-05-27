@@ -36,6 +36,7 @@ import type {
   ParseResult,
 } from "@vectorgov-t/schemas";
 import { embedBatch } from "../lib/batch-embedding.js";
+import { withR2Retry } from "../lib/retry.js";
 import { callContainerParse, type ParseInput } from "./container-client.js";
 import {
   appendWarning,
@@ -64,11 +65,21 @@ const BATCH_SIZE = 100;
 /**
  * Concorrência máxima de uploads R2 simultâneos.
  *
- * R2 aceita uploads em paralelo mas Cloudflare Workers tem limite de
- * "outbound subrequests" (50 no plano free, 1000 pago). 20 paralelo
- * deixa folga para os fetches do Container + Vectorize.
+ * R2 aceita uploads em paralelo mas tem RATE LIMIT POR OBJETO interno
+ * (erro 10058: "Reduce your concurrent request rate for the same object").
+ * Esse limite não é documentado precisamente mas empiricamente se manifesta
+ * acima de ~10 puts/s para o mesmo prefixo lógico.
+ *
+ * F5.1 (hardening): reduzido de 20 → 8 após falha na ingestão da LC 214
+ * (4336 dispositivos) na fase markdown. Combinado com `withR2Retry` em
+ * cada `put`, deixa o pipeline resiliente a picos transientes sem perder
+ * o trabalho de parsing (218k tokens) já gasto.
+ *
+ * Trade-off de latência: ingestão da LC 214 sobe de ~3min (teórico) para
+ * ~6-8min, mas confiabilidade salta drasticamente. EC 132 (376 disp) não
+ * é afetada porque cabe em <50 batches.
  */
-const R2_CONCURRENCY = 20;
+const R2_CONCURRENCY = 8;
 
 /**
  * Helper para iterar uma lista em sub-batches.
@@ -222,16 +233,23 @@ async function uploadMarkdowns(
   await runWithConcurrency(parse.dispositivos, R2_CONCURRENCY, async (d, i) => {
     const key = dispositivoR2Key(parse.norma.id, d);
     const md = renderDispositivoMd(parse.norma, d);
-    await env.R2_LEIS.put(key, md, {
-      httpMetadata: {
-        contentType: "text/markdown; charset=utf-8",
-      },
-      customMetadata: {
-        norma_id: parse.norma.id,
-        dispositivo_id: d.id,
-        tipo: d.tipo_dispositivo,
-      },
-    });
+    // `withR2Retry` cobre R2 10058 + erros de rede transientes; um único
+    // .md falhando após 4 tentativas é fatal — o orchestrator marca
+    // `failed` em vez de deixar buracos nos embeddings.
+    await withR2Retry(
+      () =>
+        env.R2_LEIS.put(key, md, {
+          httpMetadata: {
+            contentType: "text/markdown; charset=utf-8",
+          },
+          customMetadata: {
+            norma_id: parse.norma.id,
+            dispositivo_id: d.id,
+            tipo: d.tipo_dispositivo,
+          },
+        }),
+      `uploadMarkdowns:${d.id}`,
+    );
     keys[i] = key;
   });
 
@@ -279,7 +297,14 @@ async function upsertVectorize(
   });
 
   for (const batch of chunked(vectors, BATCH_SIZE)) {
-    await env.VECTORIZE.upsert(batch);
+    // Vectorize tem rate-limit similar ao R2 sob rajadas (limite não
+    // documentado precisamente). `withR2Retry` cobre os mesmos casos
+    // transientes; upsert é idempotente (mesmo ID sobrescreve) então
+    // retentar é seguro.
+    await withR2Retry(
+      () => env.VECTORIZE.upsert(batch),
+      `upsertVectorize:batch-${batch.length}`,
+    );
   }
 }
 
@@ -417,9 +442,16 @@ async function updateIndiceGlobal(env: Env, parse: ParseResult): Promise<void> {
     .concat(entry);
   indice.atualizado_em = new Date().toISOString();
 
-  await env.R2_LEIS.put(key, JSON.stringify(indice, null, 2), {
-    httpMetadata: { contentType: "application/json; charset=utf-8" },
-  });
+  // _index.json é o objeto MAIS contendido do bucket (toda ingestão escreve
+  // nele). É o caso clássico de R2 10058 quando duas normas ingerem em
+  // paralelo — retry é obrigatório aqui.
+  await withR2Retry(
+    () =>
+      env.R2_LEIS.put(key, JSON.stringify(indice, null, 2), {
+        httpMetadata: { contentType: "application/json; charset=utf-8" },
+      }),
+    `updateIndiceGlobal`,
+  );
 }
 
 /**
@@ -435,21 +467,37 @@ async function uploadNormaArtefatos(env: Env, parse: ParseResult): Promise<void>
     indexado_em: new Date().toISOString(),
   };
 
+  // Os 3 artefatos rodam em paralelo (chaves distintas, sem contenção
+  // por objeto). Cada um tem retry transiente — falha de um único deles
+  // ainda derruba a fase, mas o cenário típico (R2 10058 momentâneo) é
+  // resolvido pela retentativa.
   await Promise.all([
-    env.R2_LEIS.put(normaMetaR2Key(parse.norma.id), JSON.stringify(meta, null, 2), {
-      httpMetadata: { contentType: "application/json; charset=utf-8" },
-    }),
-    env.R2_LEIS.put(
-      normaSumarioR2Key(parse.norma.id),
-      JSON.stringify(parse.sumario ?? {}, null, 2),
-      {
-        httpMetadata: { contentType: "application/json; charset=utf-8" },
-      },
+    withR2Retry(
+      () =>
+        env.R2_LEIS.put(normaMetaR2Key(parse.norma.id), JSON.stringify(meta, null, 2), {
+          httpMetadata: { contentType: "application/json; charset=utf-8" },
+        }),
+      `uploadNormaArtefatos:meta`,
+    ),
+    withR2Retry(
+      () =>
+        env.R2_LEIS.put(
+          normaSumarioR2Key(parse.norma.id),
+          JSON.stringify(parse.sumario ?? {}, null, 2),
+          {
+            httpMetadata: { contentType: "application/json; charset=utf-8" },
+          },
+        ),
+      `uploadNormaArtefatos:sumario`,
     ),
     // Texto canônico completo — útil para offsets dos dispositivos.
-    env.R2_LEIS.put(`${parse.norma.id}/_canonical.txt`, parse.canonical_text, {
-      httpMetadata: { contentType: "text/plain; charset=utf-8" },
-    }),
+    withR2Retry(
+      () =>
+        env.R2_LEIS.put(`${parse.norma.id}/_canonical.txt`, parse.canonical_text, {
+          httpMetadata: { contentType: "text/plain; charset=utf-8" },
+        }),
+      `uploadNormaArtefatos:canonical`,
+    ),
   ]);
 }
 
