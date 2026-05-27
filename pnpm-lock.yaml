@@ -39,6 +39,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
         version: 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)
+      '@vectorgov-t/schemas':
+        specifier: workspace:*
+        version: link:../../packages/schemas
       agents:
         specifier: ^0.2.0
         version: 0.2.35(@cloudflare/workers-types@4.20260525.1)(ai@5.0.192(zod@4.4.3))(react@19.2.6)(typescript@5.9.3)(zod@4.4.3)
