@@ -62,7 +62,7 @@ export function criarOrquestrador(): AgentRole<
     ): Promise<PlanoOrquestrador> {
       const system = montarSystemPrompt(SYSTEM_BASE, skills);
       const result = await contexto.llm.generateObject({
-        modelo: "gemini-3.5-flash",
+        modelo: contexto.modelos?.pevs_orquestrador ?? "gemini-3.5-flash",
         system,
         messages: [
           {

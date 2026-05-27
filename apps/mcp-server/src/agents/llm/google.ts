@@ -251,15 +251,56 @@ export class GoogleLLMClient implements LLMClient {
 
 /**
  * Factory ergonômica — recebe o `env` do Worker e devolve o client.
- * Arremessa cedo se a key não estiver configurada (vê secret no
- * wrangler.toml ou .dev.vars).
+ *
+ * Hoje a key chega do cliente em CADA request (header `X-Google-API-Key` ou
+ * WS subprotocol `vectorgov-key.<key>`), não mais do `env`. Mantemos esta
+ * factory como fallback caso alguém queira voltar ao modo "secret no
+ * wrangler" — bastando setar `env.GOOGLE_API_KEY` localmente.
  */
 export function criarGoogleLLM(env: { GOOGLE_API_KEY?: string }): GoogleLLMClient {
   const key = env.GOOGLE_API_KEY;
   if (!key) {
     throw new Error(
-      "GOOGLE_API_KEY não configurada — defina via `wrangler secret put GOOGLE_API_KEY` ou em .dev.vars",
+      "GOOGLE_API_KEY ausente — configure em /admin/config no UI primeiro",
     );
   }
   return new GoogleLLMClient(key);
+}
+
+/**
+ * Testa se uma API key é válida fazendo uma chamada mínima ao Google.
+ *
+ * Custa ~5 tokens (~$0.00005). Retorna `{ok: true}` em sucesso ou
+ * `{ok: false, message: ...}` em qualquer erro de auth/rede.
+ */
+export async function testarChaveGoogle(
+  apiKey: string,
+  modelo: ModeloLLM = "gemini-3.5-flash",
+): Promise<{ ok: boolean; message?: string }> {
+  if (!apiKey || apiKey.trim().length === 0) {
+    return { ok: false, message: "key vazia" };
+  }
+  try {
+    const client = new GoogleLLMClient(apiKey.trim());
+    const stream = client.streamText({
+      modelo,
+      system: "ping",
+      messages: [{ role: "user", content: "ok" }],
+      maxSteps: 1,
+      temperatura: 0,
+      tag: "test-key",
+    });
+    for await (const ev of stream) {
+      if (ev.type === "error") {
+        return { ok: false, message: ev.error };
+      }
+      if (ev.type === "finish") {
+        return { ok: true };
+      }
+    }
+    return { ok: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, message: msg };
+  }
 }

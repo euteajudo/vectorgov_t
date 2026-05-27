@@ -19,13 +19,15 @@ import {
   type JSX,
   type KeyboardEvent,
 } from "react";
-import { Send, Bot, User, Wrench, ChevronDown, ChevronRight } from "lucide-react";
+import Link from "next/link";
+import { Send, Bot, User, Wrench, ChevronDown, ChevronRight, KeyRound } from "lucide-react";
 import type { ChatEvent, Mensagem, ToolCall } from "@vectorgov-t/schemas";
 import {
   abrirChatSocket,
   listarMensagens,
   type ChatSocket,
 } from "../lib/notebooks-api";
+import { useApiKey } from "../lib/api-key-store";
 
 /**
  * Estado de uma mensagem do assistant durante o streaming (antes de ser
@@ -158,6 +160,7 @@ export function NotebookChat({
   const [erroConexao, setErroConexao] = useState<string | null>(null);
   const socketRef = useRef<ChatSocket | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const { apiKey, ready: apiKeyReady } = useApiKey();
 
   // Carrega histórico via REST no mount.
   useEffect(() => {
@@ -175,11 +178,17 @@ export function NotebookChat({
     };
   }, [notebookId]);
 
-  // Abre WebSocket no mount, fecha no unmount.
+  // Abre WebSocket no mount (apenas quando há key), fecha no unmount.
   useEffect(() => {
+    if (!apiKeyReady) return;
+    if (!apiKey) {
+      setConectado(false);
+      return;
+    }
     const ws = abrirChatSocket(
       notebookId,
       handleEvent,
+      apiKey,
       () => setConectado(false),
       () => setErroConexao("WebSocket desconectado"),
     );
@@ -197,7 +206,7 @@ export function NotebookChat({
       socketRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [notebookId]);
+  }, [notebookId, apiKey, apiKeyReady]);
 
   // Auto-scroll quando mensagens mudam.
   useEffect(() => {
@@ -334,7 +343,22 @@ export function NotebookChat({
         ref={containerRef}
         className="flex-1 overflow-y-auto bg-gray-50 px-4 py-4 space-y-4"
       >
-        {historico.length === 0 && stream === null && (
+        {apiKeyReady && !apiKey && (
+          <div className="mx-auto max-w-md text-center mt-12 space-y-3 rounded-md border border-amber-200 bg-amber-50 p-4">
+            <KeyRound className="mx-auto h-8 w-8 text-amber-600" />
+            <p className="text-sm text-amber-900">
+              Configure sua API key do Google para conversar com este documento.
+            </p>
+            <Link
+              href="/admin/config"
+              className="inline-flex items-center gap-1.5 rounded bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-700"
+            >
+              Configurar API key
+            </Link>
+          </div>
+        )}
+
+        {apiKeyReady && apiKey && historico.length === 0 && stream === null && (
           <div className="mx-auto max-w-md text-center text-sm text-gray-500 mt-12">
             <Bot className="mx-auto h-8 w-8 text-gray-300" />
             <p className="mt-2">

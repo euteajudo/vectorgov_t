@@ -50,6 +50,11 @@ import {
   handleListarNotebooks,
   handleUploadDocumento,
 } from "./api/notebooks.js";
+import {
+  handleGetModelos,
+  handlePutModelos,
+  handleTestKey,
+} from "./api/config.js";
 
 /**
  * Versão do servidor — bumpar manualmente em cada release até existir CI.
@@ -186,6 +191,19 @@ async function route(
   }
   if (request.method === "GET" && url.pathname === "/api/historico") {
     return handleListarHistorico(request, env);
+  }
+
+  // -----------------------------------------------------------------------
+  // API REST de configuração (modelos + teste de chave).
+  // -----------------------------------------------------------------------
+  if (request.method === "GET" && url.pathname === "/api/config/models") {
+    return handleGetModelos(request, env);
+  }
+  if (request.method === "PUT" && url.pathname === "/api/config/models") {
+    return handlePutModelos(request, env);
+  }
+  if (request.method === "POST" && url.pathname === "/api/config/test-key") {
+    return handleTestKey(request, env);
   }
 
   // -----------------------------------------------------------------------

@@ -24,6 +24,7 @@ import {
   Library,
   Menu,
   MessageSquare,
+  Settings,
   Sparkles,
   UploadCloud,
   X,
@@ -74,6 +75,12 @@ const NAV_ITEMS: NavItem[] = [
     label: "Ingestão de normas",
     icon: <UploadCloud className="h-4 w-4" />,
     description: "Indexar lei/decreto",
+  },
+  {
+    href: "/admin/config",
+    label: "Configurações",
+    icon: <Settings className="h-4 w-4" />,
+    description: "API key + modelos",
   },
 ];
 

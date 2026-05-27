@@ -334,10 +334,16 @@ export interface ConversarOpts {
   onEvent: (event: ChatEvent) => void | Promise<void>;
   /** AbortSignal pro caller cancelar (WebSocket fechou). */
   signal?: AbortSignal;
+  /**
+   * Modelo a usar pro orquestrador do chat. Quando omitido, default
+   * `gemini-3.5-flash`. Caller (notebook-agent) lê do KV antes de chamar.
+   */
+  modelo?: import("../llm/types.js").ModeloLLM;
 }
 
 export async function conversar(opts: ConversarOpts): Promise<ResultadoConversa> {
   const { env, llm, notebook, userText, onEvent, signal } = opts;
+  const modeloEscolhido = opts.modelo ?? "gemini-3.5-flash";
   const meta = await notebook.getMeta();
   const historico = await notebook.listarMensagens();
   const tools = buildTools(env, llm, notebook);
@@ -358,7 +364,7 @@ export async function conversar(opts: ConversarOpts): Promise<ResultadoConversa>
   >();
 
   for await (const ev of llm.streamText({
-    modelo: "gemini-3.5-flash",
+    modelo: modeloEscolhido,
     system,
     messages,
     tools,
@@ -416,7 +422,7 @@ export async function conversar(opts: ConversarOpts): Promise<ResultadoConversa>
     texto: textoAcumulado,
     tool_calls: toolCalls,
     tokens: tokensTotal,
-    modelo: "gemini-3.5-flash",
+    modelo: modeloEscolhido,
     finish_reason: finishReason,
   };
 }

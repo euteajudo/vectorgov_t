@@ -41,8 +41,13 @@ import {
   NotebookMetaSchema,
 } from "@vectorgov-t/schemas";
 import { embedBatch } from "../lib/batch-embedding.js";
-import { criarGoogleLLM } from "./llm/google.js";
+import { GoogleLLMClient } from "./llm/google.js";
 import { conversar } from "./conversational/engine.js";
+import {
+  extractApiKeyFromWS,
+  findKeySubprotocol,
+} from "../lib/api-key.js";
+import { getModelConfig } from "../lib/model-config.js";
 
 const STORAGE_FLAG_SCHEMA = "schema_aplicado_v1";
 
@@ -581,6 +586,7 @@ export class NotebookAgent {
     userText: string,
     ws: WebSocket,
     signal: AbortSignal,
+    apiKey: string | null,
   ): Promise<void> {
     const sendEvent = (ev: ChatEvent) => {
       try {
@@ -591,6 +597,15 @@ export class NotebookAgent {
         // socket fechou — engine ainda continua, mas eventos viram no-op.
       }
     };
+
+    if (!apiKey) {
+      sendEvent({
+        type: "error",
+        message:
+          "API key ausente — configure em /admin/config e reabra o chat.",
+      });
+      return;
+    }
 
     // Persiste a mensagem do user antes de gerar a resposta.
     const userMsgId =
@@ -607,7 +622,8 @@ export class NotebookAgent {
     });
 
     try {
-      const llm = criarGoogleLLM(this.env);
+      const llm = new GoogleLLMClient(apiKey);
+      const cfg = await getModelConfig(this.env);
       const resultado = await conversar({
         env: this.env,
         llm,
@@ -615,6 +631,7 @@ export class NotebookAgent {
         userText,
         onEvent: sendEvent,
         signal,
+        modelo: cfg.modelos.chat_orquestrador,
       });
       await this.registrarMensagem({
         id: resultado.message_id,
@@ -653,6 +670,13 @@ export class NotebookAgent {
       request.headers.get("Upgrade") === "websocket"
     ) {
       await this.garantirSchema();
+
+      // A key chega pelo subprotocol `vectorgov-key.<key>`. O servidor
+      // PRECISA ecoar o mesmo subprotocol na resposta 101 — senão o
+      // browser rejeita a conexão.
+      const apiKey = extractApiKeyFromWS(request);
+      const echoProtocol = findKeySubprotocol(request);
+
       const pair = new WebSocketPair();
       const client = pair[0];
       const server = pair[1];
@@ -685,13 +709,21 @@ export class NotebookAgent {
             payload.text,
             server,
             abortController.signal,
+            apiKey,
           );
         } else if (payload.type === "abort") {
           abortController.abort();
         }
       });
 
-      return new Response(null, { status: 101, webSocket: client });
+      const responseInit: ResponseInit & { webSocket: WebSocket } = {
+        status: 101,
+        webSocket: client,
+      };
+      if (echoProtocol) {
+        responseInit.headers = { "Sec-WebSocket-Protocol": echoProtocol };
+      }
+      return new Response(null, responseInit);
     }
 
     try {

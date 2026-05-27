@@ -9,6 +9,8 @@
 import type { Metadata } from "next";
 import { Sidebar } from "@/components/sidebar";
 import { Providers } from "@/components/providers";
+import { ApiKeyProvider } from "@/lib/api-key-store";
+import { ApiKeyBanner } from "@/components/api-key-banner";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -30,14 +32,17 @@ export default function RootLayout({
     <html lang="pt-BR">
       <body>
         <Providers>
-          <div className="min-h-screen">
-            <Sidebar />
-            <main className="md:pl-72">
-              <div className="mx-auto max-w-7xl px-4 py-6 md:px-8 md:py-10 pt-16 md:pt-10">
-                {children}
-              </div>
-            </main>
-          </div>
+          <ApiKeyProvider>
+            <div className="min-h-screen">
+              <Sidebar />
+              <main className="md:pl-72">
+                <ApiKeyBanner />
+                <div className="mx-auto max-w-7xl px-4 py-6 md:px-8 md:py-10 pt-16 md:pt-10">
+                  {children}
+                </div>
+              </main>
+            </div>
+          </ApiKeyProvider>
         </Providers>
       </body>
     </html>
