@@ -26,6 +26,18 @@ import {
   handleIngestaoIniciar,
   handleIngestaoStatus,
 } from "./pipeline/handlers.js";
+import {
+  handleGerarParecer,
+  handleGetParecer,
+  handlePeticaoStatus,
+  handlePeticaoUpload,
+} from "./api/peticoes.js";
+import { handleListarHistorico } from "./api/historico.js";
+import {
+  handleCarregarSkill,
+  handleListarSkills,
+  handlePublicarSkill,
+} from "./api/skills.js";
 
 /**
  * Versão do servidor — bumpar manualmente em cada release até existir CI.
@@ -126,6 +138,54 @@ async function route(
 
   if (request.method === "GET" && url.pathname.startsWith("/ingestao/status/")) {
     return handleIngestaoStatus(request, env);
+  }
+
+  // -----------------------------------------------------------------------
+  // API REST consumida pela web-ui (Track H).
+  // -----------------------------------------------------------------------
+  if (request.method === "POST" && url.pathname === "/api/peticoes/upload") {
+    return handlePeticaoUpload(request, env, ctx);
+  }
+  // GET /api/peticoes/:id/parecer
+  if (
+    request.method === "GET" &&
+    /^\/api\/peticoes\/[^/]+\/parecer$/.test(url.pathname)
+  ) {
+    return handleGetParecer(request, env);
+  }
+  // POST /api/peticoes/:id/parecer
+  if (
+    request.method === "POST" &&
+    /^\/api\/peticoes\/[^/]+\/parecer$/.test(url.pathname)
+  ) {
+    return handleGerarParecer(request, env);
+  }
+  // GET /api/peticoes/:id (sem /parecer)
+  if (
+    request.method === "GET" &&
+    /^\/api\/peticoes\/[^/]+$/.test(url.pathname)
+  ) {
+    return handlePeticaoStatus(request, env);
+  }
+  if (request.method === "GET" && url.pathname === "/api/historico") {
+    return handleListarHistorico(request, env);
+  }
+  if (request.method === "GET" && url.pathname === "/api/skills") {
+    return handleListarSkills(request, env);
+  }
+  // POST /api/skills/:nome/publicar
+  if (
+    request.method === "POST" &&
+    /^\/api\/skills\/[^/]+\/publicar$/.test(url.pathname)
+  ) {
+    return handlePublicarSkill(request, env);
+  }
+  // GET /api/skills/:nome
+  if (
+    request.method === "GET" &&
+    /^\/api\/skills\/[^/]+$/.test(url.pathname)
+  ) {
+    return handleCarregarSkill(request, env);
   }
 
   return errorResponse("Not Found", 404);
