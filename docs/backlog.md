@@ -15,23 +15,23 @@ Snapshot do estado real do projeto. Atualizado em 2026-05-27.
 | F2 — Componentes core | Tools MCP, sistema de skills, parser, agentes | Concluída |
 | F3 — Frontend | Next.js, rotas, integração API | Concluída (deploy Pages diferido) |
 | F4 — Integração end-to-end | Pipeline orquestrador → tools → agentes; handshake MCP corrigido | Concluída |
-| F5 — Hardening + Demo | Tracks J (hardening), K (demo), L (docs) | **Em curso** |
+| F5 — Hardening + Demo | Tracks J (hardening), K (demo), L (docs) | Concluída — review final aplicado |
 
 ---
 
 ## Fase 5 — Tracks em paralelo
 
 ### Track J — Hardening
-- Owner: `feature/f5-hardening`.
-- Escopo: validação de input (Zod nas APIs REST), segurança, rate-limit refinado, observability básica.
-- Entregáveis: notas em `docs/hardening-notes.md`.
-- Status: em curso.
+- Owner: `feature/f5-hardening` (mergeada via PR #16).
+- Escopo: R2 retry com backoff exponencial + concorrência reduzida (20→8); telemetria de custo por análise (`TrackedLLMClient` + log `analise_completa`); quota diária 500/IP além da janela de 60/min.
+- Entregáveis: `apps/mcp-server/src/lib/retry.ts`, `apps/mcp-server/src/agents/cost-tracker.ts`, notas em `docs/hardening-notes.md`. 33 testes novos (208/208 passando).
+- Status: **concluído nesta sprint**.
 
 ### Track K — Demo
-- Owner: `feature/f5-demo`.
+- Owner: `feature/f5-demo` (mergeada via PR #14).
 - Escopo: roteiro de demonstração ponta a ponta, cheat sheet para apresentações.
 - Entregáveis: `docs/demo-roteiro.md`, `docs/demo-cheatsheet.md`.
-- Status: em curso.
+- Status: **concluído nesta sprint**.
 
 ### Track L — Documentação operacional (este worktree)
 - Owner: `feature/f5-docs`.
@@ -43,14 +43,17 @@ Snapshot do estado real do projeto. Atualizado em 2026-05-27.
 
 ## Issues abertas
 
-### #54 — LC 214/2025 falha de ingestão (P1)
-**Sintoma:** pipeline trava em `fase=markdown` com warnings `r2_delete_warn` ou erros intermitentes no upload paralelo dos `.md` por dispositivo.
+### #54 — LC 214/2025 falha de ingestão (P1 — parcialmente resolvida)
+**Sintoma original:** pipeline trava em `fase=markdown` com warnings `r2_delete_warn` ou erros intermitentes no upload paralelo dos `.md` por dispositivo (4336 dispositivos da LC 214 disparavam erro R2 10058).
 
-**Causa provável:** rate limit do R2 quando `R2_CONCURRENCY=20` em norma com 600+ dispositivos. Estoura subrequest budget ou Class A ops em rajada.
+**Causa raiz:** rate limit do R2 quando `R2_CONCURRENCY=20` em norma grande estoura subrequest budget e Class A ops em rajada.
 
-**Workaround atual:** reduzir `R2_CONCURRENCY` para 5 em `apps/mcp-server/src/pipeline/orchestrator.ts` e re-ingerir (purge idempotente cuida da limpeza prévia).
+**Mitigação aplicada (PR #16 / F5.1):**
+- `R2_CONCURRENCY` reduzido de 20 para 8 em `apps/mcp-server/src/pipeline/orchestrator.ts:82`
+- `withR2Retry` aplicado em todos os 6 pontos de put R2 (uploadMarkdowns, upsertVectorize, updateIndiceGlobal, uploadNormaArtefatos meta/sumario/canonical) com backoff exponencial 500ms × 2^n + jitter 0-200ms (até 4 retentativas, só erros transientes)
+- Expectativa: LC 214 conclui em ~6-8min em vez de falhar
 
-**Próximos passos:** instrumentar logs por batch de upload, considerar backoff exponencial, avaliar fila Cloudflare Queue para serializar.
+**Pendente:** validar em produção com re-ingestão real da LC 214. Se ainda falhar, reduzir `R2_CONCURRENCY` para 5 e/ou avaliar Cloudflare Queue para serializar.
 
 ### #53 — Validação Zod nas APIs REST (P0 — em verificação)
 **Estado:** já implementada em `apps/mcp-server/src/api/validation.ts` e usada em `peticoes.ts` e `skills.ts`. Falta auditoria final.

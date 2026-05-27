@@ -640,7 +640,12 @@ O Worker MCP serve `Access-Control-Allow-Origin: *` para o endpoint MCP, então 
 
 ### Rate limit
 
-60 req/min por IP no Worker MCP (ver `apps/mcp-server/src/lib/rate-limit.ts`). Excedido retorna 429.
+Duas dimensões aplicadas em `apps/mcp-server/src/lib/rate-limit.ts`:
+
+- **60 req/min por IP** (janela curta)
+- **500 req/dia por IP** (cota diária — adicionada na F5.1)
+
+Excedido retorna 429 com header `X-RateLimit-Scope: minute|day` para identificar qual dimensão estourou. Ver [`troubleshooting.md`](./troubleshooting.md) para conduta.
 
 ---
 
