@@ -47,6 +47,17 @@ enabled = true
 name = "NOTEBOOK_AGENT"
 class_name = "NotebookAgent"
 
+# Durable Object: SessionAgent (1 DO global "default" por enquanto).
+# Persistência SQL do histórico de petições analisadas + pareceres
+# gerados pelo PEVSEngine.
+[[durable_objects.bindings]]
+name = "SESSION_AGENT"
+class_name = "SessionAgent"
+
 [[migrations]]
 tag = "v2-notebook-agent"
 new_sqlite_classes = ["NotebookAgent"]
+
+[[migrations]]
+tag = "v3-session-agent"
+new_sqlite_classes = ["SessionAgent"]

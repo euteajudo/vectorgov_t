@@ -23,6 +23,8 @@ import { handleMcp } from "./mcp/server.js";
 // `class_name = "NotebookAgent"` declarado em wrangler.toml a partir
 // do export default do Worker.
 export { NotebookAgent } from "./agents/notebook-agent.js";
+// SessionAgent — DO global pra histórico de análises/pareceres (PEVS).
+export { SessionAgent } from "./agents/session-agent.js";
 import { enforceRateLimit } from "./lib/rate-limit.js";
 import { corsHeaders, withSecurity } from "./lib/security.js";
 import { errorResponse, jsonResponse } from "./lib/responses.js";
@@ -50,6 +52,11 @@ import {
   handleListarNotebooks,
   handleUploadDocumento,
 } from "./api/notebooks.js";
+import {
+  handleGetModelos,
+  handlePutModelos,
+  handleTestKey,
+} from "./api/config.js";
 
 /**
  * Versão do servidor — bumpar manualmente em cada release até existir CI.
@@ -186,6 +193,19 @@ async function route(
   }
   if (request.method === "GET" && url.pathname === "/api/historico") {
     return handleListarHistorico(request, env);
+  }
+
+  // -----------------------------------------------------------------------
+  // API REST de configuração (modelos + teste de chave).
+  // -----------------------------------------------------------------------
+  if (request.method === "GET" && url.pathname === "/api/config/models") {
+    return handleGetModelos(request, env);
+  }
+  if (request.method === "PUT" && url.pathname === "/api/config/models") {
+    return handlePutModelos(request, env);
+  }
+  if (request.method === "POST" && url.pathname === "/api/config/test-key") {
+    return handleTestKey(request, env);
   }
 
   // -----------------------------------------------------------------------

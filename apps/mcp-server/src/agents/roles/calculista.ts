@@ -54,7 +54,7 @@ export function criarCalculista(): AgentRole<
     ): Promise<ResultadoCalculista> {
       const system = montarSystemPrompt(SYSTEM_BASE, skills);
       const result = await contexto.llm.generateObject({
-        modelo: "gemini-3.5-flash",
+        modelo: contexto.modelos?.pevs_calculista ?? "gemini-3.5-flash",
         system,
         messages: [
           {

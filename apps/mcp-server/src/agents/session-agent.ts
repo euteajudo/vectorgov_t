@@ -398,4 +398,69 @@ export class SessionAgent {
   protected getEnv(): Env {
     return this.env;
   }
+
+  /**
+   * Handler HTTP do DO. Roteamento interno usado pelo `session-loader`
+   * (cliente do Worker pro DO).
+   *
+   *   POST /analisar-peticao   { peticao, analise }
+   *   POST /gerar-parecer      { parecer }
+   *   POST /registrar-conversa { id, role, content }
+   *   GET  /historico?limit=
+   *   GET  /analise?id=
+   *   GET  /parecer?id=
+   *   GET  /conversas?n=
+   */
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const pathname = url.pathname;
+    try {
+      if (request.method === "POST" && pathname === "/analisar-peticao") {
+        const body = (await request.json()) as {
+          peticao: Peticao;
+          analise: AnaliseReequilibrio;
+        };
+        await this.analisarPeticao(body.peticao, body.analise);
+        return Response.json({ ok: true });
+      }
+      if (request.method === "POST" && pathname === "/gerar-parecer") {
+        const body = (await request.json()) as { parecer: Parecer };
+        await this.gerarParecer(body.parecer);
+        return Response.json({ ok: true });
+      }
+      if (request.method === "POST" && pathname === "/registrar-conversa") {
+        const body = (await request.json()) as {
+          id: string;
+          role: "user" | "assistant";
+          content: string;
+        };
+        await this.registrarConversa(body.id, body.role, body.content);
+        return Response.json({ ok: true });
+      }
+      if (request.method === "GET" && pathname === "/historico") {
+        const limit = Number(url.searchParams.get("limit") ?? 20);
+        const hist = await this.listarHistorico(limit);
+        return Response.json({ historico: hist });
+      }
+      if (request.method === "GET" && pathname === "/analise") {
+        const id = url.searchParams.get("id") ?? "";
+        const res = await this.carregarAnalise(id);
+        return Response.json(res ?? null);
+      }
+      if (request.method === "GET" && pathname === "/parecer") {
+        const id = url.searchParams.get("id") ?? "";
+        const res = await this.carregarParecer(id);
+        return Response.json(res ?? null);
+      }
+      if (request.method === "GET" && pathname === "/conversas") {
+        const n = Number(url.searchParams.get("n") ?? 10);
+        const msgs = await this.ultimasConversas(n);
+        return Response.json({ conversas: msgs });
+      }
+      return new Response(`Not found: ${pathname}`, { status: 404 });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return Response.json({ error: msg }, { status: 500 });
+    }
+  }
 }

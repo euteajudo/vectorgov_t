@@ -22,6 +22,18 @@ import {
   validatePeticaoId,
   zodErrorResponse,
 } from "./validation.js";
+import {
+  PeticaoSchema,
+  type Peticao,
+  type AnaliseReequilibrio,
+} from "@vectorgov-t/schemas";
+import { extractApiKey } from "../lib/api-key.js";
+import { getModelConfig } from "../lib/model-config.js";
+import { GoogleLLMClient } from "../agents/llm/google.js";
+import { PEVSEngine, type DecisaoFeature2 } from "../agents/pevs-engine.js";
+import { buildToolsForPEVS } from "../agents/tools-adapter.js";
+import { getSessionAgentClient } from "../agents/session-loader.js";
+import type { SessionAgent } from "../agents/session-agent.js";
 
 /**
  * Tamanho máximo de PDF aceito (bytes). Igual ao endpoint de ingestão.
@@ -526,49 +538,136 @@ function gerarParecerMock(analiseId: string): unknown {
 }
 
 /**
- * Roda em background "simulando" o pipeline PEVS por algumas centenas de ms.
+ * Constrói uma `Peticao` validada a partir do metadata do form e do
+ * arquivo PDF anexado. O form pode trazer alguns campos faltando — usamos
+ * defaults razoáveis pra não exigir 12 campos obrigatórios no upload (o
+ * agente conversa com o texto do PDF se quiser detalhes que não estão
+ * estruturados aqui).
  *
- * Em produção real, este avanço de fases viria do `PEVSEngine` com `await`
- * em cada step + `env.CACHE.put` para atualizar o registro.
- *
- * TODO: integrar PEVS engine real.
+ * `peticaoId` é gerado pelo handler e injetado pra o SessionAgent persistir
+ * a mesma chave.
  */
-async function simularPipeline(
+function montarPeticaoDoForm(
+  peticaoId: string,
+  metadata: Record<string, unknown>,
+  pdfName: string,
+): Peticao {
+  const get = (k: string): string =>
+    typeof metadata[k] === "string" ? (metadata[k] as string).trim() : "";
+
+  const fato = get("fato_alegado");
+  const fatoFinal =
+    fato.length >= 50
+      ? fato
+      : `(Sem fato_alegado detalhado no form. PDF anexado: "${pdfName}". O Pesquisador deve buscar o conteúdo na base normativa a partir das outras pistas — contrato, base legal invocada, valor.)`;
+
+  const dataAss = get("data_assinatura");
+  const dataAssFinal = /^\d{4}-\d{2}-\d{2}$/.test(dataAss)
+    ? dataAss
+    : new Date().toISOString().slice(0, 10);
+
+  const baseLegalRaw = metadata["base_legal_invocada"];
+  const baseLegal = Array.isArray(baseLegalRaw)
+    ? (baseLegalRaw as unknown[])
+        .map((s) => String(s).trim())
+        .filter((s) => s.length > 0)
+    : [];
+
+  const peticao: Peticao = PeticaoSchema.parse({
+    id: peticaoId,
+    requerente: get("requerente") || "(requerente não informado)",
+    contratante: {
+      razao_social: get("contratante") || "(contratante não informado)",
+      cnpj: get("contratante_cnpj") || "",
+    },
+    contratado: {
+      razao_social: get("contratado") || "(contratado não informado)",
+      cnpj: get("contratado_cnpj") || "",
+    },
+    contrato: {
+      numero: get("contrato_numero") || "(s/n)",
+      modalidade:
+        (get("modalidade") as Peticao["contrato"]["modalidade"]) || "outro",
+      data_assinatura: dataAssFinal,
+      data_inicio_vigencia: dataAssFinal,
+      valor_centavos:
+        typeof metadata["valor_contrato_centavos"] === "number"
+          ? (metadata["valor_contrato_centavos"] as number)
+          : 0,
+      objeto: get("objeto") || "(objeto não informado)",
+    },
+    fato_alegado: fatoFinal,
+    base_legal_invocada: baseLegal,
+    calculos_apresentados: [],
+    anexos_urls: [],
+    data_protocolo:
+      get("data_protocolo") || new Date().toISOString().slice(0, 10),
+  });
+  return peticao;
+}
+
+/**
+ * Roda o motor PEVS real em background. Atualiza o KV a cada fase via
+ * callback `onFase` do engine. Em caso de erro, marca `fase: 'failed'`
+ * com mensagem no record.
+ */
+async function rodarPEVSReal(
   env: Env,
   ctx: ExecutionContext,
   record: PeticaoRecord,
+  peticao: Peticao,
+  apiKey: string,
 ): Promise<void> {
-  // Background task — não bloqueia a resposta HTTP.
   ctx.waitUntil(
     (async () => {
-      const fases: PeticaoRecord["fase"][] = [
-        "PLAN",
-        "EXECUTE",
-        "ANALYZE",
-        "VERIFY",
-        "SYNTHESIZE",
-      ];
-      const pcts = [10, 30, 55, 75, 90];
-      for (let i = 0; i < fases.length; i++) {
-        // Pequeno delay para que o frontend perceba progressão visual.
-        await new Promise((r) => setTimeout(r, 400));
-        const updated: PeticaoRecord = {
-          ...record,
-          fase: fases[i]!,
-          progresso_pct: pcts[i]!,
+      let curr = record;
+      try {
+        const llm = new GoogleLLMClient(apiKey);
+        const cfg = await getModelConfig(env);
+        const tools = buildToolsForPEVS(env);
+        const sessionAgent = getSessionAgentClient(env);
+
+        const engine = new PEVSEngine({
+          llm,
+          // SessionAgentClient implementa só os métodos que o engine usa,
+          // mas o TS exige a interface completa. Como o engine só toca
+          // `analisarPeticao` no F1, o cast é seguro.
+          sessionAgent: sessionAgent as unknown as SessionAgent,
+          tools,
+          modelos: cfg.modelos,
+          onFase: async (fase, pct, extra) => {
+            curr = {
+              ...curr,
+              fase: fase === "done" ? "done" : fase,
+              progresso_pct: pct,
+              atualizado_em: new Date().toISOString(),
+              ...(extra && typeof extra === "object"
+                ? { metadata: { ...curr.metadata, ...extra } }
+                : {}),
+            };
+            await writeRecord(env, curr);
+          },
+        });
+
+        const { analise } = await engine.executarFeature1(peticao);
+        curr = {
+          ...curr,
+          fase: "done",
+          progresso_pct: 100,
           atualizado_em: new Date().toISOString(),
+          analise,
+        };
+        await writeRecord(env, curr);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const updated: PeticaoRecord = {
+          ...curr,
+          fase: "failed",
+          atualizado_em: new Date().toISOString(),
+          erro: msg,
         };
         await writeRecord(env, updated);
-        record = updated;
       }
-      const final: PeticaoRecord = {
-        ...record,
-        fase: "done",
-        progresso_pct: 100,
-        atualizado_em: new Date().toISOString(),
-        analise: gerarAnaliseMock(record.id, record.metadata, env),
-      };
-      await writeRecord(env, final);
     })(),
   );
 }
@@ -632,8 +731,28 @@ export async function handlePeticaoUpload(
   // TODO: persistir PDF em R2 (R2_LEIS bucket ou bucket dedicado a petições)
   // antes de disparar o pipeline. Por enquanto descartamos o blob.
 
+  // Exige API key (header X-Google-API-Key) — sem ela o pipeline real
+  // não consegue chamar nenhum agente.
+  const apiKey = extractApiKey(request);
+  if (!apiKey) {
+    return errorResponse(
+      "Header X-Google-API-Key ausente. Configure em /admin/config antes de subir petição.",
+      401,
+    );
+  }
+
   const id = newPeticaoId();
   const agora = new Date().toISOString();
+
+  // Constrói Peticao validada. Erros de validação Zod viram 400 amigável.
+  let peticao: Peticao;
+  try {
+    peticao = montarPeticaoDoForm(id, metadata, pdfRaw.name);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return errorResponse(`Petição inválida: ${msg}`, 400);
+  }
+
   const record: PeticaoRecord = {
     id,
     fase: "queued",
@@ -648,8 +767,8 @@ export async function handlePeticaoUpload(
   };
   await writeRecord(env, record);
 
-  // Dispara o "pipeline" em background.
-  await simularPipeline(env, ctx, record);
+  // Dispara o pipeline PEVS real em background.
+  await rodarPEVSReal(env, ctx, record, peticao, apiKey);
 
   return jsonResponse(
     {
@@ -709,6 +828,14 @@ export async function handleGerarParecer(
   if (!idCheck.ok) return idCheck.response;
   const id = idCheck.data;
 
+  const apiKey = extractApiKey(request);
+  if (!apiKey) {
+    return errorResponse(
+      "Header X-Google-API-Key ausente. Configure em /admin/config.",
+      401,
+    );
+  }
+
   const record = await readRecord(env, id);
   if (!record) {
     return errorResponse("Petição não encontrada", 404);
@@ -720,18 +847,65 @@ export async function handleGerarParecer(
     );
   }
 
-  // TODO: integrar PEVSEngine.executarFeature2(...)
-  const analise = record.analise as { id: string };
-  const parecer = gerarParecerMock(analise.id ?? id);
+  const analise = record.analise as AnaliseReequilibrio;
+  if (analise.veredito === "inconclusiva") {
+    return errorResponse(
+      "Não é possível gerar parecer formal a partir de análise inconclusiva. Complemente os pontos pendentes primeiro.",
+      409,
+    );
+  }
 
-  const updated: PeticaoRecord = {
-    ...record,
-    parecer,
-    atualizado_em: new Date().toISOString(),
+  // Body opcional: tipo_documento + cabecalho_meta. Defaults razoáveis.
+  let body: Partial<DecisaoFeature2> = {};
+  try {
+    const raw = await request.text();
+    if (raw.length > 0) {
+      body = JSON.parse(raw) as Partial<DecisaoFeature2>;
+    }
+  } catch {
+    // body vazio é aceitável (usa defaults)
+  }
+
+  const decisao: DecisaoFeature2 = {
+    tipo_documento: body.tipo_documento ?? "parecer_formal",
+    cabecalho_meta: body.cabecalho_meta ?? {
+      numero: `PARECER-${id.slice(0, 8)}`,
+      parecerista: "vectorgov-t",
+      orgao: "(órgão não informado)",
+      assunto: `Reequilíbrio econômico-financeiro — contrato ${
+        typeof record.metadata?.contrato_numero === "string"
+          ? record.metadata.contrato_numero
+          : "(s/n)"
+      }`,
+      data: new Date().toISOString().slice(0, 10),
+    },
   };
-  await writeRecord(env, updated);
 
-  return jsonResponse(parecer, 201);
+  try {
+    const llm = new GoogleLLMClient(apiKey);
+    const cfg = await getModelConfig(env);
+    const tools = buildToolsForPEVS(env);
+    const sessionAgent = getSessionAgentClient(env);
+
+    const engine = new PEVSEngine({
+      llm,
+      sessionAgent: sessionAgent as unknown as SessionAgent,
+      tools,
+      modelos: cfg.modelos,
+    });
+    const { parecer } = await engine.executarFeature2(analise, decisao);
+
+    const updated: PeticaoRecord = {
+      ...record,
+      parecer,
+      atualizado_em: new Date().toISOString(),
+    };
+    await writeRecord(env, updated);
+    return jsonResponse(parecer, 201);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return errorResponse(`Falha ao gerar parecer: ${msg}`, 500);
+  }
 }
 
 /**

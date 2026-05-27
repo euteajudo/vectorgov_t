@@ -12,6 +12,7 @@
  */
 import type { ZodSchema } from "zod";
 import type { LLMClient, ModeloLLM } from "./llm/index.js";
+import type { FuncaoModelo } from "../lib/model-config.js";
 
 /**
  * Placeholder do que o Track E (skills) entregará — basta um identificador
@@ -80,6 +81,12 @@ export interface AgentContext {
   logger: AgentLogger;
   sessionId: string;
   tracingId: string;
+  /**
+   * Override de modelo por função. Lido do KV (`config:models`) no início
+   * de cada operação. Quando ausente, cada role usa seu default histórico
+   * (Flash em quase todos, Pro no Auditor).
+   */
+  modelos?: Partial<Record<FuncaoModelo, ModeloLLM>>;
 }
 
 /**

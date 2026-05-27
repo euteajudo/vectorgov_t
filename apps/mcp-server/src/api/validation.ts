@@ -48,6 +48,38 @@ export const PeticaoUploadMetadataSchema = z
       .optional(),
     valor_pleiteado_centavos: z.number().int().nonnegative().optional(),
     observacoes: z.string().max(5000).optional(),
+
+    // Campos necessários pra o PEVS engine real. Opcionais no schema mas
+    // o handler exige todos quando dispara o pipeline real.
+    requerente: z.string().trim().min(1).max(300).optional(),
+    objeto: z.string().trim().min(1).max(1000).optional(),
+    modalidade: z
+      .enum([
+        "pregao_eletronico",
+        "pregao_presencial",
+        "concorrencia",
+        "dispensa",
+        "inexigibilidade",
+        "concurso",
+        "leilao",
+        "dialogo_competitivo",
+        "outro",
+      ])
+      .optional(),
+    valor_contrato_centavos: z.number().int().nonnegative().optional(),
+    data_assinatura: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, {
+        message: "data_assinatura deve ser YYYY-MM-DD",
+      })
+      .optional(),
+    fato_alegado: z
+      .string()
+      .trim()
+      .min(50, "fato_alegado precisa de pelo menos 50 caracteres")
+      .max(20_000)
+      .optional(),
+    base_legal_invocada: z.array(z.string().min(1).max(500)).optional(),
   })
   .passthrough(); // permite campos extras sem rejeitar
 

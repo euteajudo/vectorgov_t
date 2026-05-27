@@ -81,6 +81,30 @@ export interface PEVSConfig {
   gerarUuid?: () => string;
   /** Provider de tempo — injetável para testes. */
   now?: () => Date;
+  /**
+   * Override de modelo por função (lido do KV via `getModelConfig`).
+   * Propagado pro `AgentContext.modelos` em todas as fases.
+   */
+  modelos?: AgentContext["modelos"];
+  /**
+   * Callback opcional chamado em cada transição de fase macro
+   * (PLAN / EXECUTE / ANALYZE / VERIFY / SYNTHESIZE / done / failed).
+   * Caller usa pra atualizar status visível (KV `peticao:<id>`).
+   * `pct` é 0-100. Erros do callback são silenciados pra não derrubar
+   * o pipeline.
+   */
+  onFase?: (
+    fase:
+      | "PLAN"
+      | "EXECUTE"
+      | "ANALYZE"
+      | "VERIFY"
+      | "SYNTHESIZE"
+      | "done"
+      | "failed",
+    pct: number,
+    extra?: Record<string, unknown>,
+  ) => void | Promise<void>;
 }
 
 /**
@@ -123,13 +147,17 @@ function uuidV4Default(): string {
 }
 
 export class PEVSEngine {
-  private readonly cfg: Required<
-    Omit<PEVSConfig, "sessionAgent" | "tools" | "llm">
-  > & {
+  private readonly cfg: {
     llm: LLMClient;
     sessionAgent: SessionAgent;
     tools: AgentContext["tools"];
+    logger: AgentLogger;
+    maxRetries: number;
+    gerarUuid: () => string;
+    now: () => Date;
   };
+  private readonly modelos: AgentContext["modelos"];
+  private readonly onFase: PEVSConfig["onFase"];
 
   constructor(cfg: PEVSConfig) {
     this.cfg = {
@@ -141,6 +169,34 @@ export class PEVSEngine {
       gerarUuid: cfg.gerarUuid ?? uuidV4Default,
       now: cfg.now ?? (() => new Date()),
     };
+    this.modelos = cfg.modelos;
+    this.onFase = cfg.onFase;
+  }
+
+  /**
+   * Dispara o callback `onFase` sem propagar erros (best-effort).
+   */
+  private async emitFase(
+    fase:
+      | "PLAN"
+      | "EXECUTE"
+      | "ANALYZE"
+      | "VERIFY"
+      | "SYNTHESIZE"
+      | "done"
+      | "failed",
+    pct: number,
+    extra?: Record<string, unknown>,
+  ): Promise<void> {
+    if (!this.onFase) return;
+    try {
+      await this.onFase(fase, pct, extra);
+    } catch (err) {
+      this.cfg.logger.warn("PEVS.onFase callback falhou", {
+        fase,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /**
@@ -161,6 +217,7 @@ export class PEVSEngine {
       logger: this.cfg.logger,
       sessionId,
       tracingId,
+      modelos: this.modelos,
     };
   }
 
@@ -228,6 +285,7 @@ export class PEVSEngine {
 
     // FASE 1 — PLAN
     this.logFase("PLAN", tracingId);
+    await this.emitFase("PLAN", 10);
     const orquestrador = criarOrquestrador();
     const plano = await orquestrador.executar({ peticao }, contexto);
     this.logFase("PLAN.ok", tracingId, {
@@ -239,6 +297,7 @@ export class PEVSEngine {
     // dos achados), então o paralelismo é: Pesquisador || Calculista,
     // depois Esp.Licitações + Analista.
     this.logFase("EXECUTE", tracingId);
+    await this.emitFase("EXECUTE", 30);
     const pesquisador = criarPesquisador();
     const calculista = criarCalculista();
 
@@ -291,6 +350,7 @@ export class PEVSEngine {
 
       // FASE 3 — ANALYZE
       this.logFase("ANALYZE", tracingId);
+      await this.emitFase("ANALYZE", 55);
       const espReeq = criarEspReequilibrio();
       const sintese = await espReeq.executar(
         {
@@ -306,6 +366,7 @@ export class PEVSEngine {
       this.logFase("VERIFY", tracingId, {
         citacoes_a_verificar: pesquisaP.citacoes_candidatas.length,
       });
+      await this.emitFase("VERIFY", 75);
       const auditor = criarAuditor();
       relatorioAuditor = await auditor.executar(
         { citacoes: pesquisaP.citacoes_candidatas },
@@ -336,6 +397,7 @@ export class PEVSEngine {
         this.logAnaliseCompleta(tracingId, peticao, duracao_ms, uso_llm);
         // Persistir
         await this.cfg.sessionAgent.analisarPeticao(peticao, analise);
+        await this.emitFase("done", 100, { veredito: analise.veredito });
         return { analise, retries_executados: retries, uso_llm };
       }
 
@@ -363,6 +425,10 @@ export class PEVSEngine {
     const duracao_ms = this.cfg.now().getTime() - inicio.getTime();
     this.logAnaliseCompleta(tracingId, peticao, duracao_ms, uso_llm);
     await this.cfg.sessionAgent.analisarPeticao(peticao, analiseInconclusiva);
+    await this.emitFase("done", 100, {
+      veredito: analiseInconclusiva.veredito,
+      retries_esgotados: true,
+    });
     return { analise: analiseInconclusiva, retries_executados: retries, uso_llm };
   }
 
@@ -404,6 +470,7 @@ export class PEVSEngine {
 
     // FASE 5 — SYNTHESIZE (Redator)
     this.logFase("F2.SYNTHESIZE", tracingId);
+    await this.emitFase("SYNTHESIZE", 90);
     const redator = criarRedator();
     const parecerId = this.cfg.gerarUuid();
     const parecer = await redator.executar(
@@ -421,6 +488,7 @@ export class PEVSEngine {
     const uso_llm = tracker.snapshot();
     const duracao_ms = this.cfg.now().getTime() - inicio.getTime();
     this.logFase("F2.FIM.ok", tracingId, { parecer_id: parecer.id });
+    await this.emitFase("done", 100, { parecer_id: parecer.id });
     // Log estruturado de custo do Feature 2 (mesmo formato do F1 para
     // facilitar agregação no Workers Logs / Analytics Engine).
     console.log(

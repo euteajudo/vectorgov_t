@@ -138,13 +138,19 @@ export interface ChatSocket {
 export function abrirChatSocket(
   id: string,
   onEvent: (e: ChatEvent) => void,
+  apiKey: string,
   onClose?: () => void,
   onError?: (err: Event) => void,
 ): ChatSocket {
+  if (!apiKey) {
+    throw new Error("abrirChatSocket: apiKey é obrigatória");
+  }
   // Converte HTTPS BASE em WSS
   const wsBase = BASE.replace(/^http/, "ws");
   const url = `${wsBase}/api/notebooks/${encodeURIComponent(id)}/chat`;
-  const ws = new WebSocket(url);
+  // Subprotocol: o browser envia `Sec-WebSocket-Protocol: vectorgov-key.<key>`
+  // e o servidor ecoa o mesmo. Não tem outro canal pra passar header em WS.
+  const ws = new WebSocket(url, [`vectorgov-key.${apiKey}`]);
   ws.addEventListener("message", (ev) => {
     try {
       const parsed = JSON.parse(ev.data as string) as ChatEvent;

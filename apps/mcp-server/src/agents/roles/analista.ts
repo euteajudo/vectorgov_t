@@ -50,7 +50,7 @@ export function criarAnalistaJuridico(): AgentRole<
     ): Promise<AnaliseJuridica> {
       const system = montarSystemPrompt(SYSTEM_BASE, skills);
       const result = await contexto.llm.generateObject({
-        modelo: "gemini-3.5-flash",
+        modelo: contexto.modelos?.pevs_analista ?? "gemini-3.5-flash",
         system,
         messages: [
           {

@@ -727,6 +727,7 @@ export function createTestEnv(overrides: TestEnvOverrides = {}): Env {
     DB: overrides.DB ?? unusedBinding<D1Database>("DB"),
     CACHE: overrides.CACHE ?? createFakeKv(),
     NOTEBOOK_AGENT: unusedBinding<DurableObjectNamespace>("NOTEBOOK_AGENT"),
+    SESSION_AGENT: unusedBinding<DurableObjectNamespace>("SESSION_AGENT"),
   };
 }
 

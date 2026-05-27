@@ -48,6 +48,11 @@ export interface Env {
   // documento, chunks e histórico de mensagens.
   NOTEBOOK_AGENT: DurableObjectNamespace;
 
+  // Durable Object namespace para SessionAgent (1 DO global por usuário
+  // — hoje "default"). Mantém histórico de petições analisadas + pareceres
+  // gerados em SQL storage. Usado pelo PEVSEngine para persistência.
+  SESSION_AGENT: DurableObjectNamespace;
+
   // Secrets (não bindings)
   GOOGLE_API_KEY?: string;
   INGESTION_API_SECRET?: string;

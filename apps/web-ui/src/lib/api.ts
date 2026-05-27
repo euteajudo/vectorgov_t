@@ -81,14 +81,37 @@ async function fetchJson<T>(
  * informa apenas o mínimo identificador.
  */
 export interface PeticaoMetadata {
-  contrato: string;
-  contratante_razao_social: string;
-  contratante_cnpj?: string;
-  contratado_razao_social: string;
-  contratado_cnpj?: string;
+  // Identificação básica
+  contrato_numero: string;
   requerente: string;
+  contratante: string;
+  contratante_cnpj?: string;
+  contratado: string;
+  contratado_cnpj?: string;
   data_protocolo: string; // YYYY-MM-DD
+
+  // Dados do contrato (necessários pro PEVS engine)
+  objeto: string;
+  modalidade:
+    | "pregao_eletronico"
+    | "pregao_presencial"
+    | "concorrencia"
+    | "dispensa"
+    | "inexigibilidade"
+    | "concurso"
+    | "leilao"
+    | "dialogo_competitivo"
+    | "outro";
+  valor_contrato_centavos: number;
+  data_assinatura: string; // YYYY-MM-DD
+
+  // Núcleo do pedido
   fato_alegado: string;
+  base_legal_invocada: string[];
+
+  // Compatibilidade — não usados pelo PEVS mas mantidos pra histórico
+  valor_pleiteado_centavos?: number;
+  observacoes?: string;
 }
 
 /**
@@ -164,15 +187,17 @@ export interface HistoricoPage {
 export async function uploadPeticao(
   pdf: File,
   metadata: PeticaoMetadata,
+  apiKey: string,
 ): Promise<PeticaoUploadResponse> {
   const form = new FormData();
   form.append("pdf", pdf);
   form.append("metadata", JSON.stringify(metadata));
 
-  // Não usamos fetchJson porque precisamos enviar multipart (sem Content-Type
-  // manual — o browser preenche com boundary).
+  // Multipart: browser preenche Content-Type com boundary automaticamente.
+  // Apenas o header de API key entra manualmente.
   const res = await fetch(`${BASE}/api/peticoes/upload`, {
     method: "POST",
+    headers: { "X-Google-API-Key": apiKey },
     body: form,
   });
 
@@ -205,9 +230,13 @@ export async function getPeticao(id: string): Promise<PeticaoStatusResponse> {
  * Retorna o `Parecer` completo (assíncrono pode ser implementado depois
  * com status polling igual à análise — por enquanto bloqueia).
  */
-export async function gerarParecer(id: string): Promise<Parecer> {
+export async function gerarParecer(
+  id: string,
+  apiKey: string,
+): Promise<Parecer> {
   return fetchJson<Parecer>(`/api/peticoes/${id}/parecer`, {
     method: "POST",
+    headers: { "X-Google-API-Key": apiKey },
   });
 }
 

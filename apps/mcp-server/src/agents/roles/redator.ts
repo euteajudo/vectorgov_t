@@ -67,7 +67,7 @@ export function criarRedator(): AgentRole<RedatorInput, Parecer> {
       }
       const system = montarSystemPrompt(SYSTEM_BASE, skills);
       const result = await contexto.llm.generateObject({
-        modelo: "gemini-3.5-flash",
+        modelo: contexto.modelos?.pevs_redator ?? "gemini-3.5-flash",
         system,
         messages: [
           {

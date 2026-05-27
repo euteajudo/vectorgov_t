@@ -176,7 +176,7 @@ export function criarAuditor(): AgentRole<AuditorInput, RelatorioAuditor> {
         .join("\n");
 
       const llmResult = await contexto.llm.generateObject({
-        modelo: "gemini-3-pro",
+        modelo: contexto.modelos?.pevs_auditor ?? "gemini-3-pro",
         system,
         messages: [
           {

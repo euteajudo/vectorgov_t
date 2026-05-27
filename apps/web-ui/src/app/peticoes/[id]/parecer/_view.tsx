@@ -43,6 +43,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { cn, formatDate } from "@/lib/utils";
 import { gerarParecer, getParecer, getPeticao } from "@/lib/api";
+import { useApiKey } from "@/lib/api-key-store";
 
 interface ParecerSecao {
   numero: "I" | "II" | "III" | "IV" | "V";
@@ -241,6 +242,7 @@ interface Versao {
 
 export function ParecerView({ peticaoId }: { peticaoId: string }) {
   const queryClient = useQueryClient();
+  const { apiKey } = useApiKey();
 
   // Verifica primeiro se a petição existe e está pronta
   const peticaoQuery = useQuery({
@@ -261,7 +263,14 @@ export function ParecerView({ peticaoId }: { peticaoId: string }) {
   });
 
   const gerarMutation = useMutation({
-    mutationFn: () => gerarParecer(peticaoId),
+    mutationFn: () => {
+      if (!apiKey) {
+        throw new Error(
+          "Configure sua API key do Google em /admin/config antes de gerar o parecer.",
+        );
+      }
+      return gerarParecer(peticaoId, apiKey);
+    },
     onSuccess: (parecer) => {
       queryClient.setQueryData(["parecer", peticaoId], parecer);
     },

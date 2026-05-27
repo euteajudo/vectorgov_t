@@ -2,29 +2,26 @@
  * Formulário client-side para upload de petição.
  *
  * Fluxo:
- *  1. Usuário dropa PDF/DOCX (max 50MB).
- *  2. Preenche metadados (contrato, contratante/contratado, requerente,
- *     data do protocolo, descrição do fato alegado).
- *  3. Clica "Analisar" → POST /api/peticoes/upload (multipart).
- *  4. Backend responde com `id` e fase=`queued`.
+ *  1. Usuário seleciona PDF/DOCX (max 50MB).
+ *  2. Preenche metadados estruturados (12 campos do PeticaoSchema +
+ *     identificação do contrato/partes).
+ *  3. Clica "Analisar" → POST /api/peticoes/upload com header
+ *     X-Google-API-Key (lida do store, sessionStorage).
+ *  4. Backend roda PEVS engine real em background.
  *  5. UI faz polling em GET /api/peticoes/:id a cada 1.5s mostrando
- *     a fase do pipeline PEVS (PLAN → EXECUTE → ANALYZE → VERIFY → SYNTHESIZE).
+ *     a fase do pipeline PEVS (PLAN → EXECUTE → ANALYZE → VERIFY → done).
  *  6. Quando fase=`done`, redireciona para `/peticoes/[id]`.
- *
- * Validação:
- *  - PDF/DOCX obrigatório.
- *  - Razão social do contratante e contratado obrigatórias.
- *  - Fato alegado: mínimo 50 chars (mesmo que PeticaoSchema).
- *  - Data: YYYY-MM-DD (input type=date).
  */
 "use client";
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useDropzone } from "react-dropzone";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   CheckCircle2,
   FileText,
+  KeyRound,
   Loader2,
   UploadCloud,
   X,
@@ -47,12 +44,10 @@ import {
   uploadPeticao,
   getPeticao,
 } from "@/lib/api";
+import { useApiKey } from "@/lib/api-key-store";
 
 const MAX_SIZE_BYTES = 50 * 1024 * 1024;
 
-/**
- * Fases visíveis no progresso (em ordem de apresentação).
- */
 const FASES_PEVS = [
   { id: "PLAN", label: "Planejamento", descricao: "Decompondo a petição em subtarefas" },
   { id: "EXECUTE", label: "Pesquisa", descricao: "Buscando normas e jurisprudência relevantes" },
@@ -63,27 +58,49 @@ const FASES_PEVS = [
 
 type FaseId = (typeof FASES_PEVS)[number]["id"];
 
+const MODALIDADES: Array<{
+  value: PeticaoMetadata["modalidade"];
+  label: string;
+}> = [
+  { value: "pregao_eletronico", label: "Pregão eletrônico" },
+  { value: "pregao_presencial", label: "Pregão presencial" },
+  { value: "concorrencia", label: "Concorrência" },
+  { value: "dispensa", label: "Dispensa" },
+  { value: "inexigibilidade", label: "Inexigibilidade" },
+  { value: "concurso", label: "Concurso" },
+  { value: "leilao", label: "Leilão" },
+  { value: "dialogo_competitivo", label: "Diálogo competitivo" },
+  { value: "outro", label: "Outro" },
+];
+
 function formatBytes(b: number): string {
   if (b < 1024) return `${b} B`;
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
   return `${(b / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-type FormState = PeticaoMetadata;
+type FormState = PeticaoMetadata & { base_legal_raw: string };
 
 const ESTADO_INICIAL: FormState = {
-  contrato: "",
-  contratante_razao_social: "",
-  contratante_cnpj: "",
-  contratado_razao_social: "",
-  contratado_cnpj: "",
+  contrato_numero: "",
   requerente: "",
+  contratante: "",
+  contratante_cnpj: "",
+  contratado: "",
+  contratado_cnpj: "",
   data_protocolo: new Date().toISOString().slice(0, 10),
+  objeto: "",
+  modalidade: "outro",
+  valor_contrato_centavos: 0,
+  data_assinatura: new Date().toISOString().slice(0, 10),
   fato_alegado: "",
+  base_legal_invocada: [],
+  base_legal_raw: "",
 };
 
 export function NovaPeticaoForm() {
   const router = useRouter();
+  const { apiKey, ready: apiKeyReady } = useApiKey();
   const [arquivo, setArquivo] = React.useState<File | null>(null);
   const [erro, setErro] = React.useState<string | null>(null);
   const [form, setForm] = React.useState<FormState>(ESTADO_INICIAL);
@@ -109,11 +126,30 @@ export function NovaPeticaoForm() {
     },
   });
 
-  // Mutation: faz o upload + recebe id da petição.
   const uploadMutation = useMutation({
     mutationFn: async () => {
       if (!arquivo) throw new Error("Selecione um arquivo");
-      return uploadPeticao(arquivo, form);
+      if (!apiKey) throw new Error("API key ausente");
+      const baseLegal = form.base_legal_raw
+        .split("\n")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      const metadata: PeticaoMetadata = {
+        contrato_numero: form.contrato_numero,
+        requerente: form.requerente,
+        contratante: form.contratante,
+        contratante_cnpj: form.contratante_cnpj,
+        contratado: form.contratado,
+        contratado_cnpj: form.contratado_cnpj,
+        data_protocolo: form.data_protocolo,
+        objeto: form.objeto,
+        modalidade: form.modalidade,
+        valor_contrato_centavos: form.valor_contrato_centavos,
+        data_assinatura: form.data_assinatura,
+        fato_alegado: form.fato_alegado,
+        base_legal_invocada: baseLegal,
+      };
+      return uploadPeticao(arquivo, metadata, apiKey);
     },
     onSuccess: (data) => {
       setPeticaoId(data.id);
@@ -123,7 +159,6 @@ export function NovaPeticaoForm() {
     },
   });
 
-  // Polling: enquanto tem id e ainda não chegou em "done", refetch a cada 1.5s.
   const statusQuery = useQuery({
     queryKey: ["peticao-status", peticaoId],
     queryFn: () => (peticaoId ? getPeticao(peticaoId) : Promise.reject()),
@@ -136,21 +171,25 @@ export function NovaPeticaoForm() {
     },
   });
 
-  // Redireciona quando fica "done".
   React.useEffect(() => {
     if (statusQuery.data?.fase === "done" && peticaoId) {
-      // Pequeno delay para o usuário ver o "concluído".
       const t = setTimeout(() => router.push(`/peticoes/${peticaoId}`), 700);
       return () => clearTimeout(t);
     }
   }, [statusQuery.data, peticaoId, router]);
 
-  // Validação básica antes de habilitar o botão.
+  const valorBRL = form.valor_contrato_centavos / 100;
+
   const podeEnviar =
     !!arquivo &&
-    form.contratante_razao_social.trim().length > 0 &&
-    form.contratado_razao_social.trim().length > 0 &&
+    !!apiKey &&
+    form.contrato_numero.trim().length > 0 &&
     form.requerente.trim().length > 0 &&
+    form.contratante.trim().length > 0 &&
+    form.contratado.trim().length > 0 &&
+    form.objeto.trim().length > 0 &&
+    form.valor_contrato_centavos > 0 &&
+    /^\d{4}-\d{2}-\d{2}$/.test(form.data_assinatura) &&
     form.fato_alegado.trim().length >= 50 &&
     !uploadMutation.isPending;
 
@@ -164,16 +203,10 @@ export function NovaPeticaoForm() {
     uploadMutation.mutate();
   }
 
-  function removerArquivo() {
-    setArquivo(null);
-  }
-
   const concluido = statusQuery.data?.fase === "done";
   const falhou = statusQuery.data?.fase === "failed";
 
-  // -----------------------------------------------------------------------
-  // Render: split entre formulário e tela de progresso.
-  // -----------------------------------------------------------------------
+  // --------------------------- tela de progresso ---------------------------
   if (peticaoId) {
     const faseAtual = statusQuery.data?.fase ?? "queued";
     const pct = statusQuery.data?.progresso_pct ?? 0;
@@ -254,6 +287,29 @@ export function NovaPeticaoForm() {
     );
   }
 
+  // --------------------------- empty state sem key ---------------------------
+  if (apiKeyReady && !apiKey) {
+    return (
+      <Card>
+        <CardContent className="py-10">
+          <div className="max-w-md mx-auto text-center space-y-3">
+            <KeyRound className="h-10 w-10 text-amber-500 mx-auto" />
+            <p className="text-sm">
+              Para analisar uma petição você precisa configurar sua API key do
+              Google. O pipeline PEVS dispara várias chamadas ao Gemini.
+            </p>
+            <Link
+              href="/admin/config"
+              className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              Configurar API key
+            </Link>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {/* Dropzone */}
@@ -279,7 +335,7 @@ export function NovaPeticaoForm() {
                 type="button"
                 variant="ghost"
                 size="icon"
-                onClick={removerArquivo}
+                onClick={() => setArquivo(null)}
                 aria-label="Remover arquivo"
               >
                 <X className="h-4 w-4" />
@@ -315,33 +371,15 @@ export function NovaPeticaoForm() {
         </CardContent>
       </Card>
 
-      {/* Metadados */}
+      {/* Identificação das partes */}
       <Card>
         <CardHeader>
-          <CardTitle>2. Dados do contrato e das partes</CardTitle>
+          <CardTitle>2. Identificação</CardTitle>
           <CardDescription>
-            Informações que serão referenciadas no parecer final.
+            Quem é o requerente e quais são as partes do contrato.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="contrato">Número do contrato</Label>
-            <Input
-              id="contrato"
-              placeholder="012/2024"
-              value={form.contrato}
-              onChange={(e) => atualizar("contrato", e.target.value)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="data_protocolo">Data do protocolo</Label>
-            <Input
-              id="data_protocolo"
-              type="date"
-              value={form.data_protocolo}
-              onChange={(e) => atualizar("data_protocolo", e.target.value)}
-            />
-          </div>
           <div className="space-y-1.5 md:col-span-2">
             <Label htmlFor="requerente">Requerente (quem assinou)</Label>
             <Input
@@ -352,14 +390,12 @@ export function NovaPeticaoForm() {
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="contratante_razao_social">Contratante (razão social)</Label>
+            <Label htmlFor="contratante">Contratante (razão social)</Label>
             <Input
-              id="contratante_razao_social"
+              id="contratante"
               placeholder="Prefeitura Municipal de Exemplo/SP"
-              value={form.contratante_razao_social}
-              onChange={(e) =>
-                atualizar("contratante_razao_social", e.target.value)
-              }
+              value={form.contratante}
+              onChange={(e) => atualizar("contratante", e.target.value)}
             />
           </div>
           <div className="space-y-1.5">
@@ -372,14 +408,12 @@ export function NovaPeticaoForm() {
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="contratado_razao_social">Contratado (razão social)</Label>
+            <Label htmlFor="contratado">Contratado (razão social)</Label>
             <Input
-              id="contratado_razao_social"
+              id="contratado"
               placeholder="Construtora Beta Ltda"
-              value={form.contratado_razao_social}
-              onChange={(e) =>
-                atualizar("contratado_razao_social", e.target.value)
-              }
+              value={form.contratado}
+              onChange={(e) => atualizar("contratado", e.target.value)}
             />
           </div>
           <div className="space-y-1.5">
@@ -394,29 +428,134 @@ export function NovaPeticaoForm() {
         </CardContent>
       </Card>
 
-      {/* Fato alegado */}
+      {/* Contrato */}
       <Card>
         <CardHeader>
-          <CardTitle>3. Fato superveniente alegado</CardTitle>
+          <CardTitle>3. Dados do contrato</CardTitle>
           <CardDescription>
-            Descrição em prosa do fato que justifica o pedido de reequilíbrio
-            (mínimo 50 caracteres).
+            Campos usados pelo Pesquisador para encontrar normas aplicáveis.
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          <Textarea
-            rows={6}
-            placeholder="Ex.: Variação atípica do INCC em 12% no período de execução, gerando impacto direto nos insumos de concreto e aço…"
-            value={form.fato_alegado}
-            onChange={(e) => atualizar("fato_alegado", e.target.value)}
-          />
-          <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
-            {form.fato_alegado.length} / 50 caracteres mínimos
-          </p>
+        <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="contrato_numero">Número do contrato</Label>
+            <Input
+              id="contrato_numero"
+              placeholder="012/2024"
+              value={form.contrato_numero}
+              onChange={(e) => atualizar("contrato_numero", e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="modalidade">Modalidade de licitação</Label>
+            <select
+              id="modalidade"
+              className="w-full rounded-md border border-[color:var(--color-border)] bg-transparent px-3 py-2 text-sm"
+              value={form.modalidade}
+              onChange={(e) =>
+                atualizar(
+                  "modalidade",
+                  e.target.value as PeticaoMetadata["modalidade"],
+                )
+              }
+            >
+              {MODALIDADES.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1.5 md:col-span-2">
+            <Label htmlFor="objeto">Objeto do contrato</Label>
+            <Input
+              id="objeto"
+              placeholder="Construção de unidade básica de saúde no bairro X"
+              value={form.objeto}
+              onChange={(e) => atualizar("objeto", e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="data_assinatura">Data de assinatura</Label>
+            <Input
+              id="data_assinatura"
+              type="date"
+              value={form.data_assinatura}
+              onChange={(e) => atualizar("data_assinatura", e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="valor_brl">Valor do contrato (R$)</Label>
+            <Input
+              id="valor_brl"
+              type="number"
+              step="0.01"
+              placeholder="1500000.00"
+              value={valorBRL === 0 ? "" : valorBRL.toFixed(2)}
+              onChange={(e) => {
+                const reais = Number.parseFloat(e.target.value);
+                if (Number.isFinite(reais) && reais >= 0) {
+                  atualizar(
+                    "valor_contrato_centavos",
+                    Math.round(reais * 100),
+                  );
+                }
+              }}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="data_protocolo">Data do protocolo da petição</Label>
+            <Input
+              id="data_protocolo"
+              type="date"
+              value={form.data_protocolo}
+              onChange={(e) => atualizar("data_protocolo", e.target.value)}
+            />
+          </div>
         </CardContent>
       </Card>
 
-      {/* Ações */}
+      {/* Fato alegado + base legal */}
+      <Card>
+        <CardHeader>
+          <CardTitle>4. Fato superveniente alegado</CardTitle>
+          <CardDescription>
+            Descrição em prosa do fato que justifica o pedido de reequilíbrio
+            (mínimo 50 caracteres). É a entrada principal do Pesquisador.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <Textarea
+              rows={6}
+              placeholder="Ex.: Variação atípica do INCC em 12% no período de execução, gerando impacto direto nos insumos de concreto e aço…"
+              value={form.fato_alegado}
+              onChange={(e) => atualizar("fato_alegado", e.target.value)}
+            />
+            <p className="mt-1 text-xs text-[color:var(--color-muted-foreground)]">
+              {form.fato_alegado.length} / 50 caracteres mínimos
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="base_legal">
+              Base legal invocada (uma por linha)
+            </Label>
+            <Textarea
+              id="base_legal"
+              rows={3}
+              placeholder={
+                "Art. 124, II, d, Lei nº 14.133/2021\nLC 214/2025, art. 30"
+              }
+              value={form.base_legal_raw}
+              onChange={(e) => atualizar("base_legal_raw", e.target.value)}
+            />
+            <p className="text-xs text-[color:var(--color-muted-foreground)]">
+              Opcional. Cada linha é uma referência separada.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="flex items-center justify-end gap-3">
         <Button
           type="button"
