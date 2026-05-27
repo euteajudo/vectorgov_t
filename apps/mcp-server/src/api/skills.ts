@@ -15,6 +15,11 @@
  */
 import type { Env } from "../env.js";
 import { errorResponse, jsonResponse } from "../lib/responses.js";
+import {
+  SkillPublicarInputSchema,
+  validateSkillNome,
+  zodErrorResponse,
+} from "./validation.js";
 
 /**
  * Mock de skills usado quando o R2 está vazio (cold-start / dev local).
@@ -246,24 +251,25 @@ export async function handlePublicarSkill(
   const url = new URL(request.url);
   // pathname: /api/skills/:nome/publicar
   const parts = url.pathname.split("/").filter(Boolean);
-  const nome = decodeURIComponent(parts[parts.length - 2] ?? "");
-  if (!nome) {
-    return errorResponse("nome da skill obrigatório", 400);
-  }
+  const rawNome = decodeURIComponent(parts[parts.length - 2] ?? "");
+  // Validação Zod do nome (follow-up P0 #53) — bloqueia path traversal
+  const nomeCheck = validateSkillNome(rawNome);
+  if (!nomeCheck.ok) return nomeCheck.response;
+  const nome = nomeCheck.data;
 
-  let body: PublicarBody;
+  let rawBody: unknown;
   try {
-    body = (await request.json()) as PublicarBody;
+    rawBody = await request.json();
   } catch {
     return errorResponse("body JSON inválido", 400);
   }
 
-  if (typeof body.conteudo_markdown !== "string" || body.conteudo_markdown.length < 50) {
-    return errorResponse(
-      "Campo 'conteudo_markdown' obrigatório (mín 50 chars)",
-      400,
-    );
+  // Validação Zod completa: estrutura, tamanhos, YAML front-matter presente
+  const bodyCheck = SkillPublicarInputSchema.safeParse(rawBody);
+  if (!bodyCheck.success) {
+    return zodErrorResponse(bodyCheck.error, "input de publicação inválido");
   }
+  const body = bodyCheck.data;
 
   const destinoPrefix = body.promover ? "active/" : "candidate/";
   const r2Key = `${destinoPrefix}${nome}.md`;
@@ -271,12 +277,15 @@ export async function handlePublicarSkill(
   try {
     await env.R2_SKILLS.put(r2Key, body.conteudo_markdown, {
       httpMetadata: { contentType: "text/markdown; charset=utf-8" },
+      customMetadata: body.descricao_versao
+        ? { descricao_versao: body.descricao_versao }
+        : undefined,
     });
     // TODO: invalidar cache KV, regenerar _meta.md/_meta.json
     return jsonResponse({
       publicado: true,
       r2_key: r2Key,
-      promovido: !!body.promover,
+      promovido: body.promover,
     });
   } catch (err) {
     return errorResponse(

@@ -12,8 +12,9 @@
 "use client";
 import * as React from "react";
 import Link from "next/link";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   ArrowLeft,
   CheckCircle2,
   GitCompareArrows,
@@ -30,7 +31,25 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { carregarSkill, publicarSkill } from "@/lib/api";
+import { carregarSkill } from "@/lib/api";
+
+/**
+ * BLOQUEIO P0 (#52): a promoção candidate→active está DESABILITADA até que
+ * o backend exponha um endpoint dedicado para ler o markdown REAL da pasta
+ * `candidate/` do R2. Hoje, o `candidateMarkdown` desta tela é gerado
+ * client-side com `replace()` simples (mock didático) — promovê-lo
+ * sobrescreveria a skill ativa com texto adulterado em produção.
+ *
+ * Para reabilitar:
+ *   1. Adicionar `GET /api/skills/:nome/candidate` em apps/mcp-server/src/api/skills.ts
+ *      que lê de R2 path `candidate/<nome>.md`.
+ *   2. Trocar a geração local por uma `useQuery` desse endpoint.
+ *   3. Reativar `promoverMutation` (importar `publicarSkill` novamente) e
+ *      remover este aviso.
+ *
+ * Ver: tasks #52 e #53 no backlog.
+ */
+const PROMOCAO_HABILITADA = false;
 
 interface SkillFullShape {
   metadata: { versao: string; status: string };
@@ -103,38 +122,28 @@ function computeDiff(active: string, candidate: string): DiffLine[] {
 }
 
 export function SkillCompare({ nome }: { nome: string }) {
-  const queryClient = useQueryClient();
-
   // Carrega a skill ativa.
   const activeQuery = useQuery({
     queryKey: ["skill", nome],
     queryFn: () => carregarSkill(nome),
   });
 
-  // Backend ainda não expõe endpoint dedicado para candidate; aqui
-  // simulamos com markdown ativo + sufixo (TODO: endpoint dedicado).
+  // ⚠️ MOCK PURELY VISUAL — backend ainda não expõe endpoint dedicado para
+  // candidate. O markdown abaixo é gerado client-side com `replace()` para
+  // demonstrar o layout do diff, mas NÃO representa um conteúdo real do R2.
+  // Por isso a promoção está bloqueada (ver `PROMOCAO_HABILITADA` acima).
   const candidateMarkdown = React.useMemo(() => {
     const a = activeQuery.data as unknown as SkillFullShape | undefined;
     if (!a) return "";
-    // Mock: pequenas mudanças didáticas no candidate
     return (
       a.corpo_markdown
-        .replace(/^# /m, "# [CANDIDATE] ")
+        .replace(/^# /m, "# [CANDIDATE — MOCK VISUAL] ")
         .replace(/orquestrador/g, "orquestrador-v2")
-        // Adiciona uma nova seção fictícia
-        + "\n\n## Nota adicional (candidate)\n\nEsta versão candidata inclui exemplos atualizados conforme feedback do Auditor (run #142).\n"
+        + "\n\n## Nota adicional (candidate)\n\nEsta versão candidata é apenas uma simulação client-side para demonstrar o diff. NÃO existe no R2.\n"
     );
   }, [activeQuery.data]);
 
   const [testando, setTestando] = React.useState(false);
-
-  const promoverMutation = useMutation({
-    mutationFn: () => publicarSkill(nome, candidateMarkdown, true),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["skill", nome] });
-      queryClient.invalidateQueries({ queryKey: ["skills"] });
-    },
-  });
 
   if (activeQuery.isLoading) {
     return (
@@ -250,6 +259,27 @@ export function SkillCompare({ nome }: { nome: string }) {
         </CardContent>
       </Card>
 
+      <Card className="border-[color:var(--color-warning)]/40 bg-[color:var(--color-warning)]/5">
+        <CardContent className="pt-4 flex items-start gap-3 text-sm">
+          <AlertTriangle
+            className="h-5 w-5 mt-0.5 text-[color:var(--color-warning)] shrink-0"
+            aria-hidden
+          />
+          <div className="space-y-1">
+            <p className="font-medium">
+              Promoção desabilitada nesta versão (Track H follow-up #52).
+            </p>
+            <p className="text-xs text-[color:var(--color-muted-foreground)]">
+              O conteúdo do candidate exibido acima é uma <strong>simulação visual</strong> gerada
+              client-side, sem persistência no R2. Promover este markdown sobrescreveria a skill
+              ativa com texto adulterado. A promoção será reabilitada quando o backend expuser
+              <code className="mx-1 font-mono">GET /api/skills/:nome/candidate</code>
+              lendo do bucket <code className="font-mono">candidate/</code>.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="flex flex-wrap gap-2">
         <Button onClick={rodarTeste} disabled={testando}>
           {testando ? (
@@ -261,26 +291,17 @@ export function SkillCompare({ nome }: { nome: string }) {
         </Button>
         <Button
           variant="success"
-          onClick={() => promoverMutation.mutate()}
-          disabled={promoverMutation.isPending}
+          disabled={!PROMOCAO_HABILITADA}
+          title={
+            PROMOCAO_HABILITADA
+              ? undefined
+              : "Bloqueado — endpoint /api/skills/:nome/candidate ainda não existe (ver follow-up #52)"
+          }
         >
-          {promoverMutation.isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <CheckCircle2 className="h-4 w-4" />
-          )}
+          <CheckCircle2 className="h-4 w-4" />
           Promover candidate → active
         </Button>
       </div>
-
-      {promoverMutation.isSuccess ? (
-        <Card className="border-[color:var(--color-success)]/30 bg-[color:var(--color-success)]/5">
-          <CardContent className="pt-4 flex items-center gap-2 text-sm">
-            <CheckCircle2 className="h-4 w-4 text-[color:var(--color-success)]" />
-            Versão promovida com sucesso. Active agora reflete o candidate.
-          </CardContent>
-        </Card>
-      ) : null}
     </div>
   );
 }

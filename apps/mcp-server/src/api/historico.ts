@@ -11,6 +11,7 @@
  */
 import type { Env } from "../env.js";
 import { errorResponse, jsonResponse } from "../lib/responses.js";
+import { parseHistoricoQuery, type HistoricoQuery } from "./validation.js";
 
 interface PeticaoRecord {
   id: string;
@@ -164,24 +165,23 @@ async function carregarHistorico(env: Env): Promise<HistoricoItem[]> {
 }
 
 /**
- * Filtra e pagina a lista in-memory. Aceitável enquanto for KV; com D1
- * isto será movido para a query SQL.
+ * Filtra e pagina a lista in-memory usando filtros já validados via Zod.
+ *
+ * Aceitável enquanto for KV; com D1 isto será movido para a query SQL
+ * (o schema Zod já define os tipos exatos para o `WHERE`).
  */
 function filtrarPaginar(
   items: HistoricoItem[],
-  filters: URLSearchParams,
+  filters: HistoricoQuery,
 ): HistoricoPage {
-  const contratante = filters.get("contratante")?.toLowerCase().trim();
-  const contratado = filters.get("contratado")?.toLowerCase().trim();
-  const veredito = filters.get("veredito")?.trim();
-  const dataInicio = filters.get("data_inicio")?.trim();
-  const dataFim = filters.get("data_fim")?.trim();
-  const q = filters.get("q")?.toLowerCase().trim();
-  const page = Math.max(1, Number.parseInt(filters.get("page") ?? "1", 10));
-  const pageSize = Math.min(
-    100,
-    Math.max(1, Number.parseInt(filters.get("page_size") ?? "20", 10)),
-  );
+  const contratante = filters.contratante?.toLowerCase();
+  const contratado = filters.contratado?.toLowerCase();
+  const veredito = filters.veredito;
+  const dataInicio = filters.data_inicio;
+  const dataFim = filters.data_fim;
+  const q = filters.q?.toLowerCase();
+  const page = filters.page;
+  const pageSize = filters.page_size;
 
   const filtered = items.filter((it) => {
     if (contratante && !it.contratante.toLowerCase().includes(contratante)) {
@@ -227,8 +227,12 @@ export async function handleListarHistorico(
 ): Promise<Response> {
   try {
     const url = new URL(request.url);
+    // Validação Zod dos query params (follow-up P0 #53)
+    const queryCheck = parseHistoricoQuery(url);
+    if (!queryCheck.ok) return queryCheck.response;
+
     const items = await carregarHistorico(env);
-    const page = filtrarPaginar(items, url.searchParams);
+    const page = filtrarPaginar(items, queryCheck.data);
     return jsonResponse(page);
   } catch (err) {
     return errorResponse(
