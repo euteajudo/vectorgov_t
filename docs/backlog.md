@@ -80,15 +80,14 @@ Não há PDF baixado, nem chamada de `/ingestao/iniciar` registrada. Próxima no
 ## Próximos itens (não bloqueados)
 
 1. **Deploy do frontend para Cloudflare Pages.** Hoje só roda local. Detalhes em [`deployment.md`](./deployment.md) §12.
-2. **Service binding `INGESTION`** entre Worker MCP e Container Python. Evita roundtrip público e protege contra `1042 — Worker loop detection`. Ver [`deployment.md`](./deployment.md) §7.
-3. **Plug do motor PEVS real** em `POST /api/peticoes/upload`. Hoje usa `simularPipeline` que avança as fases sem chamar agentes. TODO marcado em `apps/mcp-server/src/api/peticoes.ts`.
-4. **Golden set no CI.** Hoje roda manualmente (`node test/golden-set/run-golden-set.mjs`). Adicionar GitHub Action que rode em PRs e bloqueie merge se quebrar veredito ou score.
-5. **Dashboard de observability.** Centralizar métricas de uso de tools, latência por fase do PEVS, taxa de aprovação do Auditor, custo por petição.
-6. **Routing A/B 90/10** para skills candidate. Hoje toda análise usa `active`. Ver [`skills-guide.md`](./skills-guide.md) §6.
-7. **Histórico de versões de skills.** Mover automaticamente versão anterior para `archive/` quando promover nova `active`. Hoje é manual.
-8. **Persistência de petições em D1.** Hoje vivem só no KV com TTL 24h (`peticao:<id>`). Migrar para tabela SQL quando volume justificar.
-9. **Cota e budget cap operacionais.** O design prevê `Budget cap $50/mês` ([`arquitetura.md`](./arquitetura.md)) — falta enforcement real.
-10. **Documentação de webhooks.** Não existem hoje; planejado para integrações com sistemas de protocolo (Pencil, SEI etc.).
+2. **Plug do motor PEVS real** em `POST /api/peticoes/upload`. Hoje usa `simularPipeline` que avança as fases sem chamar agentes. TODO marcado em `apps/mcp-server/src/api/peticoes.ts`.
+3. **Golden set no CI.** Hoje roda manualmente (`node test/golden-set/run-golden-set.mjs`). Adicionar GitHub Action que rode em PRs e bloqueie merge se quebrar veredito ou score.
+4. **Dashboard de observability.** Centralizar métricas de uso de tools, latência por fase do PEVS, taxa de aprovação do Auditor, custo por petição.
+5. **Routing A/B 90/10** para skills candidate. Hoje toda análise usa `active`. Ver [`skills-guide.md`](./skills-guide.md) §6.
+6. **Histórico de versões de skills.** Mover automaticamente versão anterior para `archive/` quando promover nova `active`. Hoje é manual.
+7. **Persistência de petições em D1.** Hoje vivem só no KV com TTL 24h (`peticao:<id>`). Migrar para tabela SQL quando volume justificar.
+8. **Cota e budget cap operacionais.** O design prevê `Budget cap $50/mês` ([`arquitetura.md`](./arquitetura.md)) — falta enforcement real.
+9. **Documentação de webhooks.** Não existem hoje; planejado para integrações com sistemas de protocolo (Pencil, SEI etc.).
 
 ---
 

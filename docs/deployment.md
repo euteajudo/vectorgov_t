@@ -176,17 +176,21 @@ Validar — chame `/health` do worker (URL ecoa o nome configurado em `wrangler.
 
 ## 7. Bindings entre os Workers
 
-Hoje o Worker MCP chama o Container Python via HTTP direto (`apps/mcp-server/src/pipeline/container-client.ts` aponta para `https://vectorgov-t-ingestion.souzat19.workers.dev`), autenticando com header `X-Ingestion-Secret`.
+O Worker MCP fala com o Container Python via **service binding `INGESTION`** — Worker-to-Worker dentro da mesma conta Cloudflare, sem roundtrip pela internet pública e sem risco de **erro 1042 (Worker loop detection)** que acontece quando dois Workers da mesma conta tentam se chamar por URL pública.
 
-> **Planejado:** introduzir um **service binding `INGESTION`** entre os dois workers para evitar o roundtrip pela internet pública e o risco de `1042 — Worker loop detection` em cenários de chamada recursiva. Quando esse binding existir, o `container-client.ts` deve passar a usar `env.INGESTION.fetch()`. Atualizar `apps/mcp-server/wrangler.toml` adicionando:
->
-> ```toml
-> [[services]]
-> binding = "INGESTION"
-> service = "vectorgov-t-ingestion"
-> ```
->
-> Não está em produção ainda. Por enquanto, ajuste a URL hard-coded em `container-client.ts` para o domínio real do seu Container Worker.
+Já está configurado em `apps/mcp-server/wrangler.toml`:
+
+```toml
+[[services]]
+binding = "INGESTION"
+service = "vectorgov-t-ingestion"
+```
+
+`apps/mcp-server/src/pipeline/container-client.ts` usa `env.INGESTION.fetch()` quando o binding existe, com fallback para HTTP direto (`https://vectorgov-t-ingestion.<sua_subdomain>.workers.dev`) em ambientes onde o binding não foi declarado.
+
+**Caveat box:** se o seu Container Worker tem outro nome (diferente de `vectorgov-t-ingestion`), ajuste o campo `service` no `wrangler.toml` do MCP.
+
+> O fallback HTTP ainda exige autenticação via header `X-Ingestion-Secret` — mantenha o `INGESTION_API_SECRET` setado nos dois Workers mesmo usando service binding (proteção em camadas).
 
 ---
 
