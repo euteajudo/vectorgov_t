@@ -1,0 +1,35 @@
+name = "vectorgov-t-mcp"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+account_id = "a89dbdb0224cd8d2292cda8a038bc297"
+
+[ai]
+binding = "AI"
+
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "legislacao-tributaria"
+
+[[r2_buckets]]
+binding = "R2_LEIS"
+bucket_name = "vectorgov-t-leis"
+
+[[r2_buckets]]
+binding = "R2_SKILLS"
+bucket_name = "vectorgov-t-skills"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "vectorgov-t-db"
+database_id = "44068178-9600-42f3-875d-26ce47a11fd4"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "0b4eaf157c064a51bcbf1d5e87af6f66"
+
+[observability]
+enabled = true
+
+# Durable Objects e Containers serao adicionados em fases posteriores
