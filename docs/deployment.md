@@ -277,27 +277,88 @@ Deve trazer 10 skills.
 
 ---
 
-## 12. Frontend (Cloudflare Pages)
+## 12. Frontend (Worker via OpenNext)
 
-> **Status:** **Planejado.** O deploy do frontend para Pages ainda não está em produção. O app roda localmente via `pnpm -F @vectorgov-t/web-ui dev`.
+> **Status:** **Em produção** em `https://vectorgov-t-web-ui.<sua_subdomain>.workers.dev`.
 
-Quando for fazer o deploy:
+O frontend é um Worker Cloudflare empacotado pelo [`@opennextjs/cloudflare`](https://opennext.js.org/cloudflare) (sucessor moderno do `next-on-pages`). Roda Next.js 15 com runtime Node em Workers, com `nodejs_compat`.
 
-1. Configurar o build no dashboard Cloudflare Pages:
-   - Framework: Next.js.
-   - Build command: `pnpm -F @vectorgov-t/web-ui build`.
-   - Output directory: `apps/web-ui/.next`.
-   - Variável `NEXT_PUBLIC_API_BASE` apontando para o domínio do Worker MCP.
-2. Conectar o repositório GitHub.
-3. Definir build de preview em branches `feature/*`.
+### 12.1 Arquivos chave
 
-Localmente, sempre testar com:
+| Arquivo | Função |
+|---|---|
+| `apps/web-ui/wrangler.toml` | `name = vectorgov-t-web-ui`, `main = .open-next/worker.js`, `compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]`, `[assets]` binding, `[vars]` com `NEXT_PUBLIC_MCP_BASE_URL` e `NEXT_PUBLIC_MCP_WORKER_URL` apontando pro Worker MCP de produção. |
+| `apps/web-ui/open-next.config.ts` | `defineCloudflareConfig({})` — defaults. |
+| `apps/web-ui/.env.local` | (gitignored) duas vars locais apontando pro Worker MCP. |
+| `apps/web-ui/scripts/wsl-setup-node.sh` | One-time: instala nvm quando necessário, depois Node 22 + pnpm 11 dentro do WSL Ubuntu. |
+| `apps/web-ui/scripts/wsl-build-deploy.sh` | Pipeline de build: detecta o checkout atual, copia source pro WSL (isolado em `~/vectorgov-t-build`), instala, builda OpenNext, copia `.open-next/` de volta. |
 
-```bash
-pnpm -F @vectorgov-t/web-ui dev
+### 12.2 Por que build via WSL no Windows
+
+O `next build` standalone usa symlinks e o OpenNext bundle gera `require()` dinâmicos no `handler.mjs`. Quando o build roda em Windows, isso resulta em:
+
+- `EPERM: operation not permitted, symlink` (resolvível com Dev Mode ou Admin).
+- Runtime no Worker: `Dynamic require of "/.next/server/middleware-manifest.json" is not supported` — bug arquitetural não resolvido por Dev Mode.
+
+A solução oficial recomendada pelo próprio OpenNext (warning impresso a cada build no Windows) é rodar o build em Linux. Usamos WSL Ubuntu.
+
+### 12.3 Deploy from-scratch
+
+**Setup one-time** (só na primeira vez):
+
+```powershell
+# Habilita Dev Mode (opcional, mas evita prompts futuros)
+Start-Process "ms-settings:developers"
+# Liga o toggle "Modo de desenvolvedor"
+
+# Execute a partir da raiz do repo no Windows.
+$repo = (Get-Location).Path
+$wslRepo = (wsl -d Ubuntu -- wslpath -a "$repo").Trim()
+
+# Instala nvm, Node 22 e pnpm 11 no WSL Ubuntu.
+wsl -d Ubuntu -- bash "$wslRepo/apps/web-ui/scripts/wsl-setup-node.sh"
 ```
 
-acessando `http://localhost:3000`.
+**A cada deploy:**
+
+```powershell
+# Execute a partir da raiz do repo no Windows.
+$repo = (Get-Location).Path
+$wslRepo = (wsl -d Ubuntu -- wslpath -a "$repo").Trim()
+
+# 1. Build via WSL — gera .open-next/ e copia pro Windows
+wsl -d Ubuntu -- bash "$wslRepo/apps/web-ui/scripts/wsl-build-deploy.sh"
+
+# 2. Deploy do Windows (wrangler já autenticado)
+cd .\apps\web-ui
+$env:NODE_OPTIONS = "--use-system-ca"
+npx wrangler deploy
+```
+
+URL resultante: `https://vectorgov-t-web-ui.<sua_subdomain>.workers.dev`.
+
+### 12.4 Em ambiente Linux/macOS nativo
+
+Sem WSL no caminho:
+
+```bash
+cd apps/web-ui
+rm -rf .next .open-next
+NEXT_PUBLIC_MCP_BASE_URL=https://vectorgov-t-mcp.<sua_subdomain>.workers.dev \
+NEXT_PUBLIC_MCP_WORKER_URL=https://vectorgov-t-mcp.<sua_subdomain>.workers.dev \
+pnpm pages:build
+pnpm pages:deploy
+```
+
+### 12.5 Dev local
+
+Para desenvolvimento, continua sendo Next dev server normal:
+
+```bash
+pnpm -F @vectorgov-t/web-ui dev    # http://localhost:3000
+```
+
+Não precisa de WSL para dev local — só para o build de produção.
 
 ---
 

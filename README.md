@@ -17,17 +17,17 @@ Todo argumento jurídico passa por um agente Auditor (Gemini 3 Pro) que confere 
 
 ## Status do desenvolvimento
 
-Protótipo funcional. **Fase 5 em curso** (hardening, documentação, demo).
+Protótipo funcional. **Fase 5 concluída** (hardening, documentação, demo, deploy completo).
 
 | Camada | Estado |
 |---|---|
 | Worker MCP | Em produção: `https://vectorgov-t-mcp.souzat19.workers.dev` |
+| UI Web (Next.js via OpenNext) | Em produção: `https://vectorgov-t-web-ui.souzat19.workers.dev` |
 | Container Python (parser de PDFs) | Deployado |
 | Cloudflare Vectorize, R2, D1, KV | Provisionados |
 | 13 tools MCP | Em produção |
 | 7 roles de agente + motor PEVS | Implementados |
 | 10 skills iniciais | Publicadas em `packages/skills/active/` |
-| Frontend Next.js (`web-ui`) | Roda local; deploy Pages **planejado** |
 | Golden set | 5 casos em `test/golden-set/` |
 | Análise via UI | Mock (motor PEVS ainda não plugado no endpoint REST) |
 
@@ -116,7 +116,7 @@ vectorgov-t/
 +-- apps/
 |   +-- mcp-server/         Worker TypeScript (MCP + agentes + API REST)
 |   +-- ingestion-api/      Container Python (parser de PDFs)
-|   +-- web-ui/             Next.js (Cloudflare Pages -- deploy planejado)
+|   +-- web-ui/             Next.js (deploy via OpenNext em Cloudflare Workers)
 +-- packages/
 |   +-- schemas/            Zod schemas compartilhados
 |   +-- skills/             Skills em markdown (source of truth -- 10 ativas)
