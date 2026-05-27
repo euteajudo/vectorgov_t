@@ -19,6 +19,10 @@
 
 import type { Env } from "./env.js";
 import { handleMcp } from "./mcp/server.js";
+// Re-export do NotebookAgent — o Cloudflare runtime resolve o
+// `class_name = "NotebookAgent"` declarado em wrangler.toml a partir
+// do export default do Worker.
+export { NotebookAgent } from "./agents/notebook-agent.js";
 import { enforceRateLimit } from "./lib/rate-limit.js";
 import { corsHeaders, withSecurity } from "./lib/security.js";
 import { errorResponse, jsonResponse } from "./lib/responses.js";
@@ -38,6 +42,14 @@ import {
   handleListarSkills,
   handlePublicarSkill,
 } from "./api/skills.js";
+import {
+  handleChatWS,
+  handleCriarNotebook,
+  handleGetNotebook,
+  handleListarMensagens,
+  handleListarNotebooks,
+  handleUploadDocumento,
+} from "./api/notebooks.js";
 
 /**
  * Versão do servidor — bumpar manualmente em cada release até existir CI.
@@ -175,6 +187,46 @@ async function route(
   if (request.method === "GET" && url.pathname === "/api/historico") {
     return handleListarHistorico(request, env);
   }
+
+  // -----------------------------------------------------------------------
+  // API REST do chat NotebookLM.
+  // -----------------------------------------------------------------------
+  if (request.method === "POST" && url.pathname === "/api/notebooks") {
+    return handleCriarNotebook(request, env);
+  }
+  if (request.method === "GET" && url.pathname === "/api/notebooks") {
+    return handleListarNotebooks(request, env);
+  }
+  // GET /api/notebooks/:id/chat (WebSocket upgrade)
+  if (
+    request.method === "GET" &&
+    /^\/api\/notebooks\/[^/]+\/chat$/.test(url.pathname) &&
+    request.headers.get("Upgrade") === "websocket"
+  ) {
+    return handleChatWS(request, env);
+  }
+  // POST /api/notebooks/:id/upload
+  if (
+    request.method === "POST" &&
+    /^\/api\/notebooks\/[^/]+\/upload$/.test(url.pathname)
+  ) {
+    return handleUploadDocumento(request, env);
+  }
+  // GET /api/notebooks/:id/mensagens
+  if (
+    request.method === "GET" &&
+    /^\/api\/notebooks\/[^/]+\/mensagens$/.test(url.pathname)
+  ) {
+    return handleListarMensagens(request, env);
+  }
+  // GET /api/notebooks/:id
+  if (
+    request.method === "GET" &&
+    /^\/api\/notebooks\/[^/]+$/.test(url.pathname)
+  ) {
+    return handleGetNotebook(request, env);
+  }
+
   if (request.method === "GET" && url.pathname === "/api/skills") {
     return handleListarSkills(request, env);
   }

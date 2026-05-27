@@ -23,6 +23,7 @@ import {
   Home,
   Library,
   Menu,
+  MessageSquare,
   Sparkles,
   UploadCloud,
   X,
@@ -49,6 +50,12 @@ const NAV_ITEMS: NavItem[] = [
     label: "Nova petição",
     icon: <FilePlus className="h-4 w-4" />,
     description: "Submeter para análise",
+  },
+  {
+    href: "/notebooks",
+    label: "Conversas",
+    icon: <MessageSquare className="h-4 w-4" />,
+    description: "Chat com documento (NotebookLM)",
   },
   {
     href: "/historico",

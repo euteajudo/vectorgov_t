@@ -19,7 +19,9 @@
 import type {
   LLMClient,
   OpcoesGeracaoEstruturada,
+  OpcoesStreamText,
   ResultadoGeracaoEstruturada,
+  StreamEvent,
 } from "./types.js";
 
 /**
@@ -121,6 +123,58 @@ export class MockLLMClient implements LLMClient {
         totalTokens: Math.ceil((promptLen + rawJson.length) / 4),
       },
       modelo: opts.modelo,
+    };
+  }
+
+  /**
+   * Stub determinístico de `streamText` — usado em testes do
+   * ConversationalEngine. Emite tokens fixos a partir de `respostaPadrao`
+   * (se for string ou objeto com `.text`) ou da mensagem mais recente
+   * do user (echo). Não simula tool calling automaticamente.
+   */
+  async *streamText(opts: OpcoesStreamText): AsyncIterable<StreamEvent> {
+    const lastUser = [...opts.messages].reverse().find((m) => m.role === "user");
+    const echo = lastUser?.content ?? "";
+    const respostaCfg = this.cfg.respostaPadrao
+      ? await this.cfg.respostaPadrao({
+          modelo: opts.modelo,
+          system: opts.system,
+          messages: opts.messages,
+          // Para o stub o schema é irrelevante — passamos um any-validador.
+          schema: { parse: (x: unknown) => x } as never,
+          tag: opts.tag,
+          temperatura: opts.temperatura,
+        })
+      : undefined;
+    let text: string;
+    if (typeof respostaCfg === "string") {
+      text = respostaCfg;
+    } else if (
+      respostaCfg &&
+      typeof respostaCfg === "object" &&
+      "text" in (respostaCfg as Record<string, unknown>)
+    ) {
+      text = String((respostaCfg as { text: unknown }).text);
+    } else {
+      text = `mock-stream: ${echo.slice(0, 60)}`;
+    }
+    // Emite o texto em 1-3 chunks pra simular streaming.
+    const partes = [
+      text.slice(0, Math.ceil(text.length / 2)),
+      text.slice(Math.ceil(text.length / 2)),
+    ].filter((p) => p.length > 0);
+    for (const p of partes) {
+      yield { type: "text-delta", text: p };
+    }
+    yield {
+      type: "finish",
+      usage: {
+        promptTokens: Math.ceil(opts.system.length / 4),
+        completionTokens: Math.ceil(text.length / 4),
+        totalTokens: Math.ceil((opts.system.length + text.length) / 4),
+      },
+      modelo: opts.modelo,
+      finishReason: "stop",
     };
   }
 

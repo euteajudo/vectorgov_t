@@ -146,3 +146,65 @@ export async function callContainerParse(
   }
   return parsed.data;
 }
+
+/**
+ * Resultado de `callContainerParseDoc` — texto puro por página, sem
+ * estrutura jurídica. Usado pelo NotebookLM chat.
+ */
+export interface ParseDocResult {
+  pages: Array<{ n: number; text: string }>;
+  total_pages: number;
+  total_chars: number;
+  pdf_hash: string;
+}
+
+/**
+ * Variante de `callContainerParse` para PDFs arbitrários. Usa o endpoint
+ * `/parse-doc` do Container que aplica PyMuPDF sem LegisParser.
+ */
+export async function callContainerParseDoc(
+  env: Env,
+  pdf: Blob,
+  pdfFilename: string,
+): Promise<ParseDocResult> {
+  const secret = env.INGESTION_API_SECRET;
+  if (!secret) {
+    throw new Error("INGESTION_API_SECRET não configurado no Worker");
+  }
+  const form = new FormData();
+  form.append("pdf", pdf, pdfFilename);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PARSE_TIMEOUT_MS);
+  let response: Response;
+  try {
+    const requestInit: RequestInit = {
+      method: "POST",
+      headers: { "X-Ingestion-Secret": secret },
+      body: form,
+      signal: controller.signal,
+    };
+    if (env.INGESTION) {
+      response = await env.INGESTION.fetch(
+        new Request("https://ingestion.local/parse-doc", requestInit),
+      );
+    } else {
+      response = await fetch(`${CONTAINER_BASE_URL}/parse-doc`, requestInit);
+    }
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(
+        `Timeout chamando Container /parse-doc após ${PARSE_TIMEOUT_MS / 1000}s`,
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "<sem body>");
+    throw new ContainerParseError(response.status, body);
+  }
+  return (await response.json()) as ParseDocResult;
+}

@@ -40,3 +40,6 @@ export * from "./analise.js";
 export * from "./parecer.js";
 export * from "./citacao.js";
 export * from "./calculo.js";
+
+// Notebook chat (NotebookLM-like)
+export * from "./notebook.js";

@@ -46,6 +46,10 @@ function fakeLlmComUsage(
         modelo: opts.modelo,
       };
     },
+    async *streamText() {
+      // Não exercitado nos testes de custo — stub vazio.
+      return;
+    },
   };
 }
 

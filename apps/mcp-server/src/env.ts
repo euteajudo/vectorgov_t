@@ -43,6 +43,11 @@ export interface Env {
   // no container-client.ts se este binding não estiver presente.
   INGESTION?: Fetcher;
 
+  // Durable Object namespace para NotebookAgent (1 DO por notebook do
+  // chat NotebookLM). Cada notebook tem seu próprio storage SQL com
+  // documento, chunks e histórico de mensagens.
+  NOTEBOOK_AGENT: DurableObjectNamespace;
+
   // Secrets (não bindings)
   GOOGLE_API_KEY?: string;
   INGESTION_API_SECRET?: string;

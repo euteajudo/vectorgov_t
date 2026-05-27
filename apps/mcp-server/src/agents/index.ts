@@ -4,6 +4,7 @@
 export * from "./types.js";
 export * from "./llm/index.js";
 export * from "./session-agent.js";
+export * from "./notebook-agent.js";
 export * from "./roles/index.js";
 export {
   PEVSEngine,

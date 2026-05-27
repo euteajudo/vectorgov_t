@@ -80,9 +80,19 @@ Não há PDF baixado, nem chamada de `/ingestao/iniciar` registrada. Próxima no
 
 ---
 
+## Em curso
+
+### Chat NotebookLM (terceira feature de produto)
+Upload de PDF arbitrário + conversa em linguagem natural com orquestrador Gemini 3.5 Flash que invoca tools MCP, agentes especialistas (Pesquisador, Calculista) e busca semântica no documento. Detalhes em [`notebook-chat.md`](./notebook-chat.md).
+
+Estado: implementação completa pronta pra revisão (PR aberto). Falta:
+- Deploy do Container Python com o novo endpoint `/parse-doc`.
+- Deploy do Worker MCP com o novo Durable Object `NotebookAgent` (migration `v2-notebook-agent`).
+- Deploy da UI com as 3 rotas novas (`/notebooks`, `/notebooks/nova`, `/notebooks/[id]`).
+
 ## Próximos itens (não bloqueados)
 
-1. **Plug do motor PEVS real** em `POST /api/peticoes/upload`. Hoje usa `simularPipeline` que avança as fases sem chamar agentes. TODO marcado em `apps/mcp-server/src/api/peticoes.ts`.
+1. **Plug do motor PEVS real** em `POST /api/peticoes/upload`. Hoje usa `simularPipeline` que avança as fases sem chamar agentes. TODO marcado em `apps/mcp-server/src/api/peticoes.ts`. **Nota**: com o `GoogleLLMClient` implementado para o chat, esse plug ficou mais simples — basta instanciá-lo no handler e injetar no PEVS engine.
 2. **Golden set no CI.** Hoje roda manualmente (`node test/golden-set/run-golden-set.mjs`). Adicionar GitHub Action que rode em PRs e bloqueie merge se quebrar veredito ou score.
 3. **Dashboard de observability.** Centralizar métricas de uso de tools, latência por fase do PEVS, taxa de aprovação do Auditor, custo por petição.
 4. **Routing A/B 90/10** para skills candidate. Hoje toda análise usa `active`. Ver [`skills-guide.md`](./skills-guide.md) §6.

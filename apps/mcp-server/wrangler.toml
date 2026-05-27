@@ -40,4 +40,12 @@ service = "vectorgov-t-ingestion"
 [observability]
 enabled = true
 
-# Durable Objects e Containers serao adicionados em fases posteriores
+# Durable Object: NotebookAgent (1 DO por notebook do chat NotebookLM).
+# Cada DO tem seu storage SQL próprio com documento + chunks + mensagens.
+[[durable_objects.bindings]]
+name = "NOTEBOOK_AGENT"
+class_name = "NotebookAgent"
+
+[[migrations]]
+tag = "v2-notebook-agent"
+new_sqlite_classes = ["NotebookAgent"]

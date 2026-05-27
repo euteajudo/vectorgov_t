@@ -2,9 +2,10 @@
 Vectorgov-t Ingestion API.
 
 FastAPI app que expoe o LegisPipeline via HTTP:
-- GET  /health   -> healthcheck
-- GET  /version  -> metadata da API
-- POST /parse    -> parseia um PDF de norma legal
+- GET  /health    -> healthcheck
+- GET  /version   -> metadata da API
+- POST /parse     -> parseia um PDF de norma legal (estruturado por dispositivo)
+- POST /parse-doc -> parseia um PDF arbitrario (texto por pagina, sem semantica juridica)
 
 Autenticacao: header X-Ingestion-Secret (compartilhado com o Worker).
 """
@@ -13,6 +14,7 @@ import hashlib
 import logging
 import os
 
+import fitz  # PyMuPDF
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 
 from legisparser import PIPELINE_VERSION, __version__
@@ -112,3 +114,76 @@ async def parse(
         ) from exc
 
     return result
+
+
+@app.post("/parse-doc")
+async def parse_doc(
+    pdf: UploadFile = File(..., description="PDF arbitrario (peticao, contrato, parecer, etc.)"),
+    x_ingestion_secret: str | None = Header(None),
+) -> dict:
+    """
+    Parseia um PDF arbitrario e retorna texto por pagina.
+
+    Diferente de /parse, NAO assume estrutura juridica. Usado pelo chat
+    NotebookLM onde o usuario pode subir qualquer documento.
+
+    Output:
+        {
+            "pages": [{"n": 1, "text": "..."}, ...],
+            "total_pages": int,
+            "total_chars": int,
+            "pdf_hash": str,
+        }
+
+    Erros:
+        400 - PDF vazio ou texto extraido vazio (provavelmente escaneado sem OCR).
+        500 - Erro abrindo o PDF (corrompido).
+    """
+    verify_secret(x_ingestion_secret)
+
+    pdf_bytes = await pdf.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="PDF vazio")
+
+    pdf_hash = hashlib.sha256(pdf_bytes).hexdigest()
+
+    logger.info(
+        f"POST /parse-doc: filename={pdf.filename}, "
+        f"size={len(pdf_bytes)} bytes, hash={pdf_hash[:16]}..."
+    )
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(f"Erro ao abrir PDF: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao abrir PDF: {exc}",
+        ) from exc
+
+    pages = []
+    total_chars = 0
+    try:
+        for i in range(doc.page_count):
+            page = doc.load_page(i)
+            text = page.get_text() or ""
+            pages.append({"n": i + 1, "text": text})
+            total_chars += len(text)
+    finally:
+        doc.close()
+
+    if total_chars == 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "PDF nao contem texto extraivel (provavelmente escaneado sem OCR). "
+                "Use um PDF com texto selecionavel."
+            ),
+        )
+
+    return {
+        "pages": pages,
+        "total_pages": len(pages),
+        "total_chars": total_chars,
+        "pdf_hash": pdf_hash,
+    }

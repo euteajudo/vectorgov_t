@@ -154,6 +154,23 @@ export class TrackedLLMClient implements LLMClient {
   }
 
   /**
+   * Streaming version — delega ao inner e contabiliza usage no evento `finish`.
+   * Eventos de tool-call/tool-result não consomem tokens próprios — eles
+   * fazem parte da prompt/completion da próxima rodada e já estão refletidos
+   * no usage final agregado.
+   */
+  async *streamText(
+    opts: import("./llm/types.js").OpcoesStreamText,
+  ): AsyncIterable<import("./llm/types.js").StreamEvent> {
+    for await (const ev of this.inner.streamText(opts)) {
+      if (ev.type === "finish") {
+        this.registrar(ev.modelo, ev.usage);
+      }
+      yield ev;
+    }
+  }
+
+  /**
    * Acumula a usage da chamada no agregado por modelo.
    *
    * Tolera `usage` parcialmente preenchida (ex.: completionTokens=0 quando

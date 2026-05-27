@@ -1,17 +1,17 @@
 /**
  * Tipos compartilhados do cliente LLM dos agentes.
  *
- * O sistema multi-agente fala com modelos via uma **abstração** (`LLMClient`)
- * que pode ser:
- *  - Mockada em testes (este arquivo expõe `MockLLMClient` em `./mock.ts`).
- *  - Implementada com Vercel AI SDK + @ai-sdk/google no runtime real
- *    (TODO Fase 3, após GOOGLE_API_KEY estar configurada).
+ * O contrato `LLMClient` cobre dois modos:
+ *  1. `generateObject` — geração estruturada (Zod-validated) usada pelos
+ *     agentes do PEVS engine. Bloqueante.
+ *  2. `streamText` — geração de texto livre com tool calling iterativo
+ *     usada pelo chat conversacional (NotebookLM). Stream de eventos.
  *
- * Conscientemente NÃO importamos `ai` / `@ai-sdk/google` aqui — manter a
- * dependência do runtime separada do contrato deixa os testes triviais
- * (sem network, sem fetch) e facilita trocar de provider mais tarde.
+ * Implementações disponíveis:
+ *  - `MockLLMClient` em `./mock.ts` (testes e desenvolvimento).
+ *  - `GoogleLLMClient` em `./google.ts` (produção, via Vercel AI SDK).
  */
-import type { ZodSchema } from "zod";
+import type { ZodSchema, ZodType } from "zod";
 
 /**
  * Modelos suportados pelo sistema.
@@ -33,13 +33,6 @@ export interface MensagemLLM {
 /**
  * Resultado de uma chamada de geração estruturada — o LLM retorna
  * um objeto que valida contra o `schema` fornecido (Zod).
- *
- * `raw` é a string bruta antes da validação (útil para debugging e
- * logs do PEVS engine).
- *
- * `usage` é melhor-esforço: o cliente real (Vercel AI SDK) preenche
- * tokens reais; o mock devolve estimativas a partir do tamanho da
- * string para que os logs do PEVS não fiquem com `null` por toda parte.
  */
 export interface ResultadoGeracaoEstruturada<T> {
   object: T;
@@ -53,8 +46,7 @@ export interface ResultadoGeracaoEstruturada<T> {
 }
 
 /**
- * Opções de uma chamada de `generateObject` — abstração ENXUTA do
- * Vercel AI SDK (suficiente para nosso uso).
+ * Opções de uma chamada de `generateObject`.
  */
 export interface OpcoesGeracaoEstruturada<T> {
   modelo: ModeloLLM;
@@ -71,27 +63,88 @@ export interface OpcoesGeracaoEstruturada<T> {
 }
 
 /**
- * Contrato do cliente LLM consumido por todos os agentes.
+ * Tool exposta ao `streamText` — formato neutro que o client converte
+ * pro shape do provider (Vercel AI SDK `tool({...})`).
  *
- * Mantemos só `generateObject` por enquanto — o sistema multi-agente
- * é structured-output-first. Streaming / texto livre podem ser
- * adicionados depois sem quebrar consumidores existentes.
+ * `execute` é assíncrono e devolve resultado JSON-serializável. Erros
+ * dentro do execute viram tool-result do tipo error que o LLM vê.
+ */
+export interface ToolForLLM<TInput = unknown, TOutput = unknown> {
+  description: string;
+  inputSchema: ZodType<TInput>;
+  execute(input: TInput): Promise<TOutput>;
+}
+
+/**
+ * Opções de `streamText`.
  *
- * TODO (Fase 3): implementação real usando Vercel AI SDK:
+ * O loop tool-call → resposta → tool-call → ... é gerenciado internamente
+ * pelo client (Vercel AI SDK faz isso com `stopWhen: stepCountIs(N)`).
+ * `maxSteps` clamp em [1, 20] (default 8) para evitar loops infinitos.
+ */
+export interface OpcoesStreamText {
+  modelo: ModeloLLM;
+  system: string;
+  messages: MensagemLLM[];
+  /** Map de tools disponíveis ao modelo. Default: sem tools (chat puro). */
+  tools?: Record<string, ToolForLLM>;
+  /** Temperatura. Default 0.5 (chat livre vs structured precisa de margem). */
+  temperatura?: number;
+  /** Limite de tool-call steps. Default 8. Clampado em [1, 20]. */
+  maxSteps?: number;
+  /** Identificador para logs/tracing. */
+  tag?: string;
+  /**
+   * Sinal de abort externo. Quando o WebSocket fecha, o caller dispara
+   * `abort()` para o streamText encerrar imediatamente sem perder tokens
+   * já gerados.
+   */
+  signal?: AbortSignal;
+}
+
+/**
+ * Eventos emitidos pelo stream — uma versão simplificada do
+ * `result.fullStream` do AI SDK que é estável entre provedores.
+ */
+export type StreamEvent =
+  | { type: "text-delta"; text: string }
+  | {
+      type: "tool-call";
+      toolCallId: string;
+      toolName: string;
+      input: unknown;
+    }
+  | {
+      type: "tool-result";
+      toolCallId: string;
+      toolName: string;
+      output: unknown;
+      isError?: boolean;
+    }
+  | {
+      type: "finish";
+      usage: {
+        promptTokens: number;
+        completionTokens: number;
+        totalTokens: number;
+      };
+      modelo: ModeloLLM;
+      finishReason: string;
+    }
+  | { type: "error"; error: string };
+
+/**
+ * Contrato do cliente LLM consumido por agentes e pelo chat conversacional.
  *
- *   import { generateObject } from "ai";
- *   import { google } from "@ai-sdk/google";
- *   const result = await generateObject({
- *     model: google(opts.modelo),
- *     system: opts.system,
- *     messages: opts.messages,
- *     schema: opts.schema,
- *     temperature: opts.temperatura ?? 0.2,
- *   });
- *   return { object: result.object, raw: result.text, usage: {...}, modelo: opts.modelo };
+ * - `generateObject` é o caminho estruturado (PEVS engine).
+ * - `streamText` é o caminho livre com tool calling (NotebookLM chat).
+ *
+ * Ambos têm que ser implementados pelo client real; o mock pode emitir
+ * stubs determinísticos pro stream.
  */
 export interface LLMClient {
   generateObject<T>(
     opts: OpcoesGeracaoEstruturada<T>,
   ): Promise<ResultadoGeracaoEstruturada<T>>;
+  streamText(opts: OpcoesStreamText): AsyncIterable<StreamEvent>;
 }
