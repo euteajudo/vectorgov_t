@@ -87,7 +87,13 @@ export async function uploadNorma(
   form.append("data_publicacao", meta.data_publicacao);
   form.append("reingestao", "true");
 
-  const res = await fetch(`${getBaseUrl()}/ingestao/iniciar`, {
+  // ?sync=true força o Worker a aguardar o pipeline completo antes de
+  // responder. Necessário porque ctx.waitUntil() é cancelado pelo runtime
+  // antes do Container Python responder em PDFs > pequenos. Trade-off:
+  // a UI fica em "parsing 5%" até o fim e pula direto pra "done" (sem
+  // progresso intermediário visível). Aceitável até implementarmos
+  // Durable Object Alarm como background driver real.
+  const res = await fetch(`${getBaseUrl()}/ingestao/iniciar?sync=true`, {
     method: "POST",
     body: form,
   });

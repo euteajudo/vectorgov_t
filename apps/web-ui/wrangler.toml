@@ -1,0 +1,21 @@
+# Worker Cloudflare gerado pelo OpenNext (substitui Cloudflare Pages).
+#
+# Build:    pnpm pages:build      (roda opennextjs-cloudflare build)
+# Deploy:   pnpm pages:deploy     (wrangler deploy)
+# Preview:  pnpm pages:preview    (wrangler dev local)
+#
+# As NEXT_PUBLIC_* são inlinadas no bundle durante o build via process.env.
+# Para mudar URL do Worker MCP, alterar aqui e rebuildar.
+name = "vectorgov-t-web-ui"
+main = ".open-next/worker.js"
+compatibility_date = "2026-05-27"
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
+
+# OpenNext assets: HTML/CSS/JS estáticos servidos direto do edge.
+[assets]
+directory = ".open-next/assets"
+binding = "ASSETS"
+
+[vars]
+NEXT_PUBLIC_MCP_BASE_URL = "https://vectorgov-t-mcp.souzat19.workers.dev"
+NEXT_PUBLIC_MCP_WORKER_URL = "https://vectorgov-t-mcp.souzat19.workers.dev"
