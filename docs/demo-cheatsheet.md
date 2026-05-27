@@ -58,7 +58,7 @@ Modelos genéricos não têm a base legal indexada, não fazem verificação det
 
 ## Backup se a UI quebrar completamente
 
-1. Abrir `apps/mcp-server/test/agents/caso-01-reequilibrio-ibs-cbs/gabarito-analise.json` no editor de texto e narrar: veredito, score, citações, memória de cálculo.
+1. Abrir `test/golden-set/caso-01-reequilibrio-ibs-cbs/gabarito-analise.json` no editor de texto e narrar: veredito (procedente), score mínimo (≥ 0,75), 3 citações obrigatórias (Lei 14.133 Art. 124 II d + LC 214 + CF Art. 195 V), valor pleiteado (R$ 125.000).
 2. Mostrar o repositório (código + README + arquitetura) como evidência de que o produto existe e está em produção.
 3. Acessar os logs do Worker em `https://dash.cloudflare.com` → Workers → Vectorgov-t → Logs para mostrar chamadas reais.
 4. Se necessário, reagendar a demo com acesso remoto à máquina em ambiente controlado.

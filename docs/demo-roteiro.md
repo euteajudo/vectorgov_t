@@ -33,9 +33,9 @@ Duração: 25–30 min · Plataforma: navegador + UI local
 - [ ] EC 132 visível em `/admin/ingestao`:
   - Abrir a aba e confirmar que "EC 132/2024" aparece na tabela com status "done".
 - [ ] Petições de teste preparadas:
-  - **Cenário A:** `apps/mcp-server/test/agents/caso-01-reequilibrio-ibs-cbs/` (petição de construtora pedindo reequilíbrio por impacto da CBS sobre insumos — veredito esperado: PROCEDENTE, score ≥ 0,85).
-  - **Cenário B:** `apps/mcp-server/test/agents/caso-05-ambiguo/` (veredito esperado: INCONCLUSIVA, score 0,40–0,70).
-  - Se os arquivos dos casos ainda não existirem no golden-set, usar os JSONs de saída dos testes unitários da pasta `apps/mcp-server/test/agents/` como script narrativo.
+  - **Cenário A:** `test/golden-set/caso-01-reequilibrio-ibs-cbs/peticao.json` (Construtora Beta Ltda × Prefeitura Municipal de Exemplo/SP, contrato 012/2024, pedido de R$ 125.000 por impacto IBS/CBS — veredito esperado: PROCEDENTE, score ≥ 0,75).
+  - **Cenário B:** `test/golden-set/caso-05-ambiguo/peticao.json` (Epsilon Tecnologia × Universidade Federal Tecnológica, contrato 156/2025, pedido de R$ 120.000 por orientação ANPD pós-LGPD — veredito esperado: INCONCLUSIVA, score 0,40–0,70).
+  - Gabaritos esperados em `test/golden-set/caso-XX-*/gabarito-analise.json`.
 - [ ] Abas abertas no navegador:
   - Aba 1: `http://localhost:3000/peticoes/nova`
   - Aba 2: `http://localhost:3000/admin/ingestao`
@@ -89,9 +89,9 @@ Duração: 25–30 min · Plataforma: navegador + UI local
 
 ### Petição: caso-01 — Reequilíbrio por impacto IBS/CBS
 
-Arquivo de referência: `apps/mcp-server/test/agents/caso-01-reequilibrio-ibs-cbs/`
+Arquivo de referência: `test/golden-set/caso-01-reequilibrio-ibs-cbs/peticao.json`
 
-Cenário narrativo: Construtora com contrato de obras firmado em 2025 pede reequilíbrio alegando que a CBS, ao entrar em vigor em 2026, aumentou em 4,7 pontos percentuais a carga sobre seus insumos — variação que extrapola qualquer álea ordinária do setor.
+Cenário narrativo: Construtora Beta Ltda assinou o contrato 012/2024 com a Prefeitura Municipal de Exemplo/SP em março de 2024 (R$ 4,5 milhões, obra de pavimentação asfáltica). À época, a carga tributária aplicável era 13,65% (PIS+COFINS+ISS). A partir de 1º de janeiro de 2026, com a vigência inicial do IBS/CBS conforme cronograma da EC 132/2023 + LC 214/2025, a carga efetiva sobre serviços de construção subiu para 18,1% (5% CBS transitório + 13,1% IBS estadual) — um delta de ~4,45 pontos percentuais. Pleiteia R$ 125.000 referentes ao saldo ainda não executado do contrato.
 
 ### Passo a passo
 
@@ -107,13 +107,13 @@ Fazer o drag-and-drop do arquivo de petição (PDF ou DOCX) na dropzone.
 
 > "Aceita PDF e DOCX, até 50 MB. Aqui estamos usando um caso real anonimizado de uma construtora que atua em obras urbanas."
 
-Preencher os campos:
-- Número do contrato: `047/2025`
-- Contratante: `Prefeitura Municipal de Exemplo/SP`
-- Contratado: `Construtora Alfa Ltda`
-- Requerente: `Dr. Exemplo da Silva — OAB/SP 12.345`
-- Data do protocolo: data de hoje
-- Fato alegado: `Vigência da CBS a partir de 01/01/2026 elevou a carga tributária sobre insumos de construção em 4,7 pontos percentuais, gerando desequilíbrio superveniente imprevisível no contrato firmado em 2025.`
+Preencher os campos (já estão prontos no JSON do caso-01 — confirmar antes de clicar):
+- Número do contrato: `012/2024`
+- Contratante: `Prefeitura Municipal de Exemplo/SP` (CNPJ 12.345.678/0001-90)
+- Contratado: `Construtora Beta Ltda` (CNPJ 98.765.432/0001-10)
+- Data do protocolo: `2026-04-15`
+- Valor pleiteado: `R$ 125.000,00`
+- Fato alegado: `Vigência do IBS/CBS a partir de 01/01/2026 (LC 214/2025) elevou a carga tributária efetiva sobre serviços de construção de 13,65% para 18,1%, gerando desequilíbrio superveniente sobre o saldo do contrato firmado em 2024.`
 
 Clicar em "Analisar petição".
 
@@ -136,7 +136,7 @@ Tempo estimado total do pipeline: 45–90 segundos (depende do Worker remoto).
 Quando redirecionar, apontar em sequência:
 
 1. **Badge de veredito**: "PROCEDENTE — em verde, direto no cabeçalho."
-2. **Score de confiança**: "87%. Acima de 80%, o Auditor considerou que as citações cobrem o caso de forma suficiente."
+2. **Score de confiança**: "Acima de 75%, o Auditor considerou que as citações cobrem o caso de forma suficiente. Quanto maior o score, maior a convergência entre os agentes especializados."
 3. **Hash de auditoria**: "Este código identifica unicamente esta análise e o conjunto de citações que a fundamentam. Se alguém questionar depois, é possível reproduzir."
 4. **Critérios de admissibilidade**: "Cinco verificações automáticas — fato superveniente identificado, nexo causal, base legal aprovada, cálculo apresentado, score adequado."
 5. **Memória de cálculo**: "Aqui está o passo a passo — percentual de impacto, base de cálculo, valor a reequilibrar. Tudo rastreável."
@@ -157,7 +157,7 @@ Clicar em "Gerar parecer formal".
 ### Plano B se algo travar
 
 - Pipeline para em alguma fase: abrir `/historico` e mostrar uma petição anterior com análise completa já salva.
-- Worker cai: abrir o arquivo `apps/mcp-server/test/agents/caso-01-reequilibrio-ibs-cbs/gabarito-analise.json` no editor de texto e narrar os campos principais (veredito, score, citações, memória de cálculo).
+- Worker cai: abrir o arquivo `test/golden-set/caso-01-reequilibrio-ibs-cbs/gabarito-analise.json` no editor de texto e narrar os campos principais (veredito, score, citações, memória de cálculo).
 
 ---
 
@@ -165,9 +165,9 @@ Clicar em "Gerar parecer formal".
 
 ### Petição: caso-05 — Pedido com doutrina dividida
 
-Arquivo de referência: `apps/mcp-server/test/agents/caso-05-ambiguo/`
+Arquivo de referência: `test/golden-set/caso-05-ambiguo/peticao.json`
 
-Cenário narrativo: Empresa de TI alega que o IBS, ao incidir sobre serviços de manutenção de software, criou impacto desequilibrador. O ponto controvertido é se o serviço se enquadra como atividade tributada de forma diferente antes e depois da Reforma — matéria sobre a qual os especialistas divergem e não há orientação consolidada da Receita Federal nem acórdão do TCU.
+Cenário narrativo: Epsilon Tecnologia da Informação Ltda, contratada pela Universidade Federal Tecnológica (contrato 156/2025) para fornecer sistema de gestão acadêmica, pede R$ 120.000 de reequilíbrio. O fundamento é que a ANPD publicou em 2026 a Orientação Técnica nº 04/2026 detalhando requisitos adicionais de pseudonimização, retenção estendida de logs (1→5 anos) e DPO terceirizado para sistemas que processam dados sensíveis de estudantes. O ponto controvertido é doutrinário: orientações infralegais (não-lei) geram direito a reequilíbrio, ou são "risco regulatório ordinário" do negócio? Parte da doutrina diz que sim, parte diz que não. Não há acórdão consolidado do TCU sobre o ponto. O próprio contratado, no texto da petição, admite a controvérsia e pede posicionamento.
 
 ### Passo a passo
 
@@ -176,15 +176,15 @@ Repetir o upload com o arquivo do caso-05. Narrar as mesmas fases do pipeline.
 Quando a análise aparecer:
 
 1. **Badge de veredito**: "INCONCLUSIVA — em cinza. O sistema não tomou partido."
-2. **Score de confiança**: "48%. Abaixo de 50% significa que as citações disponíveis não cobrem a questão de forma suficiente para uma conclusão segura."
-3. **Fundamentação**: Ler um trecho em voz alta — o sistema apresenta os dois lados do argumento, sem forçar uma conclusão.
+2. **Score de confiança**: "Entre 40 e 70%. Score nessa faixa é o sinal honesto de incerteza — significa que as citações disponíveis não cobrem a questão de forma suficiente para uma conclusão segura."
+3. **Fundamentação**: Ler um trecho em voz alta — o sistema apresenta os dois lados do argumento (a corrente que entende que orientação infralegal gera reequilíbrio versus a que considera risco regulatório ordinário), sem forçar uma conclusão.
 4. **Pontos a complementar**: Mostrar o card com severidade "alta" — recomenda consulta à Procuradoria antes de decidir.
 
 ### Por que isso importa
 
 > "Um sistema que sempre decide é PIOR do que um sistema que sabe quando não decidir. Se ele desse veredito nesse caso, estaria inventando uma certeza que não existe. E o analista assinaria um parecer baseado em fundamento frágil."
 >
-> "O que o sistema está dizendo é: a doutrina está dividida, não há acórdão do TCU sobre esse ponto específico, e a orientação da Receita Federal ainda não foi publicada. Mande para a Procuradoria. Esse é exatamente o trabalho que um analista experiente faria — e ele chegaria a mesma conclusão depois de horas. Aqui chegou em minutos."
+> "O que o sistema está dizendo é: a doutrina está dividida sobre se orientação infralegal gera reequilíbrio, não há acórdão consolidado do TCU sobre esse ponto, e o próprio contratado admite a controvérsia. Recomendação: consulta à Procuradoria. Esse é exatamente o trabalho que um analista experiente faria — e ele chegaria a mesma conclusão depois de horas. Aqui chegou em minutos."
 
 ### Frase de impacto (guardar para o momento certo)
 
