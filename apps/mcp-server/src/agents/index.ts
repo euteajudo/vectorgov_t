@@ -12,3 +12,10 @@ export {
   type ResultadoFeature1,
   type ResultadoFeature2,
 } from "./pevs-engine.js";
+export {
+  TrackedLLMClient,
+  estimateCostUsd,
+  PRECOS_POR_MILHAO_USD,
+  type SnapshotUso,
+  type UsoPorModelo,
+} from "./cost-tracker.js";

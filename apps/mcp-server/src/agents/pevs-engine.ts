@@ -29,6 +29,7 @@
 import type { AgentContext, AgentLogger } from "./types.js";
 import { consoleLogger } from "./types.js";
 import type { LLMClient } from "./llm/index.js";
+import { TrackedLLMClient, type SnapshotUso } from "./cost-tracker.js";
 import type { SessionAgent } from "./session-agent.js";
 import { criarOrquestrador } from "./roles/orchestrator.js";
 import { criarPesquisador } from "./roles/pesquisador.js";
@@ -89,6 +90,13 @@ export interface ResultadoFeature1 {
   analise: AnaliseReequilibrio;
   /** Número de retries que foram necessários (0 se Auditor aprovou na primeira). */
   retries_executados: number;
+  /**
+   * Snapshot de tokens consumidos + custo estimado USD (F5.1 problema 2).
+   * Acumulado por todas as chamadas LLM da execução, segregado por modelo.
+   * Útil para budget tracking, análise de regressão de prompt e dashboard
+   * de custo por petição.
+   */
+  uso_llm: SnapshotUso;
 }
 
 /**
@@ -96,6 +104,8 @@ export interface ResultadoFeature1 {
  */
 export interface ResultadoFeature2 {
   parecer: Parecer;
+  /** Mesma estrutura de `uso_llm` do Feature 1, escopo desta execução. */
+  uso_llm: SnapshotUso;
 }
 
 /**
@@ -135,11 +145,19 @@ export class PEVSEngine {
 
   /**
    * Constrói o AgentContext padrão usado em todas as fases.
+   *
+   * O `llm` passado AOS ROLES é o `TrackedLLMClient` (wrapper que registra
+   * tokens). O `inner` original fica encapsulado — roles não sabem que
+   * existe instrumentação, e isso é proposital (single responsibility).
    */
-  private montarContexto(sessionId: string, tracingId: string): AgentContext {
+  private montarContexto(
+    sessionId: string,
+    tracingId: string,
+    tracker: TrackedLLMClient,
+  ): AgentContext {
     return {
       tools: this.cfg.tools,
-      llm: this.cfg.llm,
+      llm: tracker,
       logger: this.cfg.logger,
       sessionId,
       tracingId,
@@ -158,6 +176,35 @@ export class PEVSEngine {
   }
 
   /**
+   * Emite o log de auditoria final de uma análise — formato fixo para
+   * facilitar agregação em dashboards (Workers Logs / Analytics Engine).
+   *
+   * Usa `console.log` em vez do `logger.info` porque o consumo downstream
+   * (busca por `event: "analise_completa"`) é facilitado quando a linha
+   * JSON é independente do prefixo do logger estruturado.
+   */
+  private logAnaliseCompleta(
+    tracingId: string,
+    peticao: Peticao,
+    duracao_ms: number,
+    uso: SnapshotUso,
+  ): void {
+    console.log(
+      JSON.stringify({
+        event: "analise_completa",
+        tracing_id: tracingId,
+        peticao_id: peticao.id ?? null,
+        contrato: peticao.contrato.numero,
+        duracao_ms,
+        tokens_total: uso.total_tokens,
+        custo_estimado_usd: uso.custo_estimado_usd,
+        chamadas_llm: uso.total_chamadas,
+        por_modelo: uso.por_modelo,
+      }),
+    );
+  }
+
+  /**
    * Feature 1 — análise de petição (PLAN→EXECUTE→ANALYZE→VERIFY).
    *
    * Não invoca o Redator (isso é Feature 2). Retorna a análise pronta
@@ -169,7 +216,10 @@ export class PEVSEngine {
   ): Promise<ResultadoFeature1> {
     const tracingId = opts.tracingId ?? this.cfg.gerarUuid();
     const sessionId = opts.sessionId ?? "default";
-    const contexto = this.montarContexto(sessionId, tracingId);
+    // Tracker novo por execução — snapshot reflete APENAS esta análise.
+    const tracker = new TrackedLLMClient(this.cfg.llm);
+    const contexto = this.montarContexto(sessionId, tracingId, tracker);
+    const inicio = this.cfg.now();
 
     this.logFase("inicio", tracingId, {
       contrato: peticao.contrato.numero,
@@ -280,10 +330,13 @@ export class PEVSEngine {
           calculosP,
           relatorioAuditor,
         );
+        const uso_llm = tracker.snapshot();
+        const duracao_ms = this.cfg.now().getTime() - inicio.getTime();
         this.logFase("FIM.ok", tracingId, { veredito: analise.veredito });
+        this.logAnaliseCompleta(tracingId, peticao, duracao_ms, uso_llm);
         // Persistir
         await this.cfg.sessionAgent.analisarPeticao(peticao, analise);
-        return { analise, retries_executados: retries };
+        return { analise, retries_executados: retries, uso_llm };
       }
 
       // Precisamos de retry
@@ -306,8 +359,11 @@ export class PEVSEngine {
       peticao,
       relatorioAuditor!,
     );
+    const uso_llm = tracker.snapshot();
+    const duracao_ms = this.cfg.now().getTime() - inicio.getTime();
+    this.logAnaliseCompleta(tracingId, peticao, duracao_ms, uso_llm);
     await this.cfg.sessionAgent.analisarPeticao(peticao, analiseInconclusiva);
-    return { analise: analiseInconclusiva, retries_executados: retries };
+    return { analise: analiseInconclusiva, retries_executados: retries, uso_llm };
   }
 
   /**
@@ -325,7 +381,9 @@ export class PEVSEngine {
   ): Promise<ResultadoFeature2> {
     const tracingId = opts.tracingId ?? this.cfg.gerarUuid();
     const sessionId = opts.sessionId ?? "default";
-    const contexto = this.montarContexto(sessionId, tracingId);
+    const tracker = new TrackedLLMClient(this.cfg.llm);
+    const contexto = this.montarContexto(sessionId, tracingId, tracker);
+    const inicio = this.cfg.now();
 
     this.logFase("F2.inicio", tracingId, {
       veredito: analise.veredito,
@@ -360,8 +418,25 @@ export class PEVSEngine {
 
     // Persistir
     await this.cfg.sessionAgent.gerarParecer(parecer);
+    const uso_llm = tracker.snapshot();
+    const duracao_ms = this.cfg.now().getTime() - inicio.getTime();
     this.logFase("F2.FIM.ok", tracingId, { parecer_id: parecer.id });
-    return { parecer };
+    // Log estruturado de custo do Feature 2 (mesmo formato do F1 para
+    // facilitar agregação no Workers Logs / Analytics Engine).
+    console.log(
+      JSON.stringify({
+        event: "parecer_completo",
+        tracing_id: tracingId,
+        analise_id: analise.id,
+        parecer_id: parecer.id,
+        duracao_ms,
+        tokens_total: uso_llm.total_tokens,
+        custo_estimado_usd: uso_llm.custo_estimado_usd,
+        chamadas_llm: uso_llm.total_chamadas,
+        por_modelo: uso_llm.por_modelo,
+      }),
+    );
+    return { parecer, uso_llm };
   }
 
   /**
