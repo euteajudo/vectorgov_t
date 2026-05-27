@@ -8,6 +8,8 @@ build/
 .next/
 out/
 *.tsbuildinfo
+.open-next/
+.vercel/
 
 # Cloudflare
 .wrangler/

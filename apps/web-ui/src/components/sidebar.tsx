@@ -63,7 +63,7 @@ const NAV_ITEMS: NavItem[] = [
     description: "Instruções dos agentes",
   },
   {
-    href: "/ingestao",
+    href: "/admin/ingestao",
     label: "Ingestão de normas",
     icon: <UploadCloud className="h-4 w-4" />,
     description: "Indexar lei/decreto",

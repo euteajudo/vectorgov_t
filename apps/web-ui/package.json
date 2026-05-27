@@ -10,7 +10,10 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "lint": "next lint"
+    "lint": "next lint",
+    "pages:build": "opennextjs-cloudflare build",
+    "pages:deploy": "opennextjs-cloudflare deploy",
+    "pages:preview": "opennextjs-cloudflare preview"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.4",
@@ -31,6 +34,7 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "^1.19.11",
     "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
@@ -39,6 +43,7 @@
     "postcss": "^8.5.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "wrangler": "^4.94.0"
   }
 }
