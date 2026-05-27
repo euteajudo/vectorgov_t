@@ -4,7 +4,7 @@
  * Loop:
  *   user_message -> streamText do Gemini 3.5 Flash com tools -> stream de
  *   eventos via callback. Tools expostas:
- *     • 13 tools MCP existentes (semantic search, fs_*, skill_*).
+ *     • 12 tools MCP read-only (semantic search, fs_*, skill_* sem publish).
  *     • 2 tools de agentes especialistas (Pesquisador, Calculista).
  *     • 2 tools do notebook (buscar_no_documento, ler_documento_inteiro).
  *
@@ -25,10 +25,11 @@ import type {
 } from "../llm/index.js";
 import { consoleLogger } from "../types.js";
 import type { NotebookAgent } from "../notebook-agent.js";
+import { MCP_TOOLS, type ToolDescriptor } from "../../mcp/tools/index.js";
 import {
-  findTool,
-  invokeTool,
-  listToolDescriptors,
+  findTool as findSkillTool,
+  invokeTool as invokeSkillTool,
+  listToolDescriptors as listSkillToolDescriptors,
 } from "../../mcp/tools/registry.js";
 import { criarPesquisador } from "../roles/pesquisador.js";
 import { criarCalculista } from "../roles/calculista.js";
@@ -47,27 +48,56 @@ export interface ResultadoConversa {
   finish_reason: string;
 }
 
+const CHAT_LEI_TOOL_NAMES = new Set([
+  "buscar_legislacao",
+  "consultar_artigo",
+  "listar_artigos_por_tema",
+  "comparar_redacoes",
+  "fs_listar_normas",
+  "fs_listar_estrutura",
+  "fs_grep",
+  "fs_ler_dispositivo",
+  "fs_ler_intervalo",
+]);
+
+const CHAT_SKILL_TOOL_NAMES = new Set([
+  "skill_listar",
+  "skill_carregar",
+  "skill_identificar_relevantes",
+]);
+
 /**
- * Converte uma ferramenta MCP existente em ToolForLLM.
- *
- * O zodSchema do registry é tipado como `ZodTypeAny` (Zod 4) — passamos
- * direto como `ZodType<unknown>` pro ToolForLLM. O execute chama o
- * invokeTool que já valida input via Zod e devolve `unknown`.
+ * Converte uma tool MCP de leis/filesystem em ToolForLLM.
  */
-function mcpToolToLlmTool(
+function mcpLeiToolToLlmTool(env: Env, def: ToolDescriptor): ToolForLLM {
+  return {
+    description: def.description,
+    inputSchema: def.inputSchema,
+    execute: async (input) => {
+      return await def.handler(input, env);
+    },
+  };
+}
+
+/**
+ * Converte uma tool MCP de skills em ToolForLLM.
+ */
+function mcpSkillToolToLlmTool(
   env: Env,
   name: string,
   description: string,
 ): ToolForLLM {
-  const def = findTool(name);
+  const def = findSkillTool(name);
   if (!def) {
-    throw new Error(`mcpToolToLlmTool: tool '${name}' não encontrada no registry`);
+    throw new Error(
+      `mcpSkillToolToLlmTool: tool '${name}' não encontrada no registry`,
+    );
   }
   return {
     description,
     inputSchema: def.zodSchema,
     execute: async (input) => {
-      return await invokeTool(env, name, input);
+      return await invokeSkillTool(env, name, input);
     },
   };
 }
@@ -82,9 +112,17 @@ function buildTools(
 ): Record<string, ToolForLLM> {
   const tools: Record<string, ToolForLLM> = {};
 
-  // 1. Todas as 13 tools MCP — disponíveis para o orquestrador.
-  for (const d of listToolDescriptors()) {
-    tools[d.name] = mcpToolToLlmTool(env, d.name, d.description);
+  // 1. Tools MCP read-only. Não expomos `skill_publicar` no chat porque
+  // prompt de usuário não deve conseguir gravar em R2/alterar skills ativas.
+  for (const d of MCP_TOOLS) {
+    if (CHAT_LEI_TOOL_NAMES.has(d.name)) {
+      tools[d.name] = mcpLeiToolToLlmTool(env, d);
+    }
+  }
+  for (const d of listSkillToolDescriptors()) {
+    if (CHAT_SKILL_TOOL_NAMES.has(d.name)) {
+      tools[d.name] = mcpSkillToolToLlmTool(env, d.name, d.description);
+    }
   }
 
   // 2. Tool do Pesquisador (agente especialista).
@@ -276,7 +314,10 @@ function buildMessages(historico: Mensagem[], userText: string): MensagemLLM[] {
     }
     // role "system" do histórico é metadata interna — não enviamos.
   }
-  messages.push({ role: "user", content: userText });
+  const last = historico[historico.length - 1];
+  if (!(last?.role === "user" && last.content === userText)) {
+    messages.push({ role: "user", content: userText });
+  }
   return messages;
 }
 

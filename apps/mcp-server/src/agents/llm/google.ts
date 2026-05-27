@@ -5,8 +5,8 @@
  *  - `generateObject` (structured) — chamado pelos agentes do PEVS engine.
  *  - `streamText` (free-form + tools) — chamado pelo chat conversacional.
  *
- * Thinking: o Flash recebe `thinkingBudget: 0` para desabilitar — chat
- * livre não precisa de raciocínio extra (latência e custo importam).
+ * Thinking: o Flash recebe `thinkingLevel: "minimal"` para reduzir latência
+ * e custo. Gemini 3.x Flash não garante thinking totalmente desligado.
  * O Pro mantém o default do modelo (não passa providerOptions).
  *
  * Limites: a chave Google chega como `env.GOOGLE_API_KEY`. Sem ela o
@@ -16,6 +16,7 @@
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import {
   generateObject as aiGenerateObject,
+  jsonSchema as aiJsonSchema,
   streamText as aiStreamText,
   stepCountIs,
   tool as aiTool,
@@ -41,25 +42,36 @@ function resolveModelId(modelo: ModeloLLM): string {
     case "gemini-3.5-flash":
       return "gemini-3.5-flash";
     case "gemini-3-pro":
-      return "gemini-3-pro";
+      return "gemini-3-pro-preview";
   }
 }
 
 /**
  * Provider options aplicados por modelo.
  *
- * Flash: thinking desabilitado (budget 0) — pra o uso do orquestrador do
- * chat conversacional, thinking só adiciona latência sem ganho de qualidade
- * mensurável em decomposição de tarefa simples.
+ * Flash: thinking mínimo — para o uso do orquestrador do chat
+ * conversacional, raciocínio extra adiciona latência sem ganho claro em
+ * decomposição de tarefa simples.
  * Pro: sem options — o Auditor depende do reasoning profundo.
  */
 function providerOptionsFor(
   modelo: ModeloLLM,
 ): Record<string, unknown> | undefined {
   if (modelo === "gemini-3.5-flash") {
-    return { google: { thinkingConfig: { thinkingBudget: 0 } } };
+    return { google: { thinkingConfig: { thinkingLevel: "minimal" } } };
   }
   return undefined;
+}
+
+function toSdkInputSchema(schema: unknown): unknown {
+  if (
+    schema &&
+    typeof schema === "object" &&
+    typeof (schema as { safeParse?: unknown }).safeParse === "function"
+  ) {
+    return schema;
+  }
+  return aiJsonSchema(schema as never);
 }
 
 /**
@@ -137,7 +149,7 @@ export class GoogleLLMClient implements LLMClient {
       for (const [name, def] of Object.entries(opts.tools)) {
         sdkTools[name] = aiTool({
           description: def.description,
-          inputSchema: def.inputSchema as never,
+          inputSchema: toSdkInputSchema(def.inputSchema) as never,
           execute: async (input: unknown) => {
             try {
               return await def.execute(input);

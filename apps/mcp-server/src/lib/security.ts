@@ -47,6 +47,15 @@ export function securityHeaders(): Record<string, string> {
  * preservar imutabilidade esperada pelo runtime do Workers.
  */
 export function withSecurity(response: Response): Response {
+  // Responses de WebSocket upgrade carregam o handle em `response.webSocket`.
+  // Recriar a Response descarta esse handle e quebra o status 101.
+  if (
+    response.status === 101 ||
+    (response as Response & { webSocket?: WebSocket }).webSocket
+  ) {
+    return response;
+  }
+
   const headers = new Headers(response.headers);
   for (const [key, value] of Object.entries(corsHeaders())) {
     headers.set(key, value);

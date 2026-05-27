@@ -71,7 +71,7 @@ export interface OpcoesGeracaoEstruturada<T> {
  */
 export interface ToolForLLM<TInput = unknown, TOutput = unknown> {
   description: string;
-  inputSchema: ZodType<TInput>;
+  inputSchema: ZodType<TInput> | Record<string, unknown>;
   execute(input: TInput): Promise<TOutput>;
 }
 

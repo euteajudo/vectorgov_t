@@ -162,7 +162,8 @@ export async function handleUploadDocumento(
 
   // 1. Salva o PDF em R2 (no bucket existente, prefixado por notebook).
   const r2Key = `notebooks/${id}/source.pdf`;
-  await env.R2_LEIS.put(r2Key, await file.arrayBuffer(), {
+  const pdfBytes = await file.arrayBuffer();
+  await env.R2_LEIS.put(r2Key, pdfBytes, {
     httpMetadata: { contentType: file.type || "application/pdf" },
     customMetadata: { notebook_id: id, filename: file.name },
   });
@@ -175,7 +176,7 @@ export async function handleUploadDocumento(
   try {
     parsed = await callContainerParseDoc(
       env,
-      new Blob([await file.arrayBuffer()], { type: file.type }),
+      new Blob([pdfBytes], { type: file.type }),
       file.name,
     );
   } catch (err) {

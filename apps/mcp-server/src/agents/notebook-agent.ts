@@ -98,7 +98,7 @@ interface KV {
 export interface NotebookAgentState {
   storage: KV & { sql: SQL };
   /** ID estável do DO — usado como notebook_id. */
-  id: { toString(): string };
+  id: { toString(): string; name?: string };
 }
 
 /**
@@ -209,7 +209,9 @@ export class NotebookAgent {
   }
 
   private notebookId(): string {
-    return this.state.id.toString();
+    // DOs criados com `idFromName(publicUuid)` preservam o UUID em `id.name`.
+    // `toString()` devolve o ID interno hexadecimal do Durable Object.
+    return this.state.id.name ?? this.state.id.toString();
   }
 
   private async garantirSchema(): Promise<void> {

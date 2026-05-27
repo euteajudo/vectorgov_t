@@ -1,6 +1,6 @@
 # Chat NotebookLM — vectorgov-t
 
-Terceira feature de produto do vectorgov-t: upload de PDF arbitrário + conversa em linguagem natural com um orquestrador LLM que pode invocar as 13 tools MCP existentes, agentes especialistas (Pesquisador, Calculista) e ferramentas próprias do notebook (busca semântica nos chunks do documento, leitura do documento inteiro).
+Terceira feature de produto do vectorgov-t: upload de PDF arbitrário + conversa em linguagem natural com um orquestrador LLM que pode invocar 12 tools MCP read-only, agentes especialistas (Pesquisador, Calculista) e ferramentas próprias do notebook (busca semântica nos chunks do documento, leitura do documento inteiro).
 
 Modelagem em uma frase: **um documento + uma conversa = um Durable Object**.
 
@@ -26,8 +26,8 @@ Modelagem em uma frase: **um documento + uma conversa = um Durable Object**.
 |  /api/notebooks/:id/chat         GET    Upgrade WS   |
 |                                                      |
 |  ConversationalEngine (apps/.../conversational/)     |
-|   - GoogleLLMClient (gemini-3.5-flash sem thinking)  |
-|   - Tools: 13 MCP + 2 agentes + 2 notebook           |
+|   - GoogleLLMClient (gemini-3.5-flash thinking minimal) |
+|   - Tools: 12 MCP + 2 agentes + 2 notebook           |
 |   - Loop tool-call gerenciado pelo Vercel AI SDK     |
 |                                                      |
 +----------+----------------+----------+---------------+
@@ -49,9 +49,9 @@ Modelagem em uma frase: **um documento + uma conversa = um Durable Object**.
 
 | Arquivo | Função |
 |---|---|
-| `apps/mcp-server/src/agents/llm/google.ts` | `GoogleLLMClient` — implementação real do `LLMClient` com `generateObject` (structured) + `streamText` (free-form + tool calling). Vercel AI SDK 5 + `@ai-sdk/google` 2. Flash com `thinkingBudget: 0`. |
+| `apps/mcp-server/src/agents/llm/google.ts` | `GoogleLLMClient` — implementação real do `LLMClient` com `generateObject` (structured) + `streamText` (free-form + tool calling). Vercel AI SDK 5 + `@ai-sdk/google` 2. Flash com `thinkingLevel: "minimal"`. |
 | `apps/mcp-server/src/agents/notebook-agent.ts` | Durable Object. SQL storage com tabelas `notebook`, `pagina`, `chunk` (com embedding opcional), `mensagem`. Métodos: `criar`, `anexarDocumento`, `registrarMensagem`, `listarMensagens`, `buscarChunks` (gera embedding on-demand), `lerDocumentoInteiro`. Handler `fetch` com roteamento + WebSocket upgrade. |
-| `apps/mcp-server/src/agents/conversational/engine.ts` | `conversar()` — loop principal. Monta tools (13 MCP + 2 agentes + 2 notebook), chama `llm.streamText`, faz proxy de eventos pro WebSocket callback, retorna texto final + tool calls. |
+| `apps/mcp-server/src/agents/conversational/engine.ts` | `conversar()` — loop principal. Monta tools (12 MCP + 2 agentes + 2 notebook), chama `llm.streamText`, faz proxy de eventos pro WebSocket callback, retorna texto final + tool calls. |
 | `apps/mcp-server/src/api/notebooks.ts` | Handlers REST. Cada notebook = 1 DO instanciado via `env.NOTEBOOK_AGENT.idFromName(id)`. Índice global de notebooks em KV com prefix `notebook-idx:`. |
 | `apps/ingestion-api/main.py` | Adicionado endpoint `POST /parse-doc` com PyMuPDF — aceita PDF arbitrário, devolve `{pages: [{n, text}], total_pages, total_chars, pdf_hash}`. Sem LegisParser. |
 | `packages/schemas/src/notebook.ts` | Schemas Zod: `NotebookMeta`, `Mensagem`, `ToolCall`, `ChatEvent` (server → client), `ChatClientEvent` (client → server). |
@@ -71,13 +71,15 @@ Modelagem em uma frase: **um documento + uma conversa = um Durable Object**.
 
 ## Tools disponíveis ao orquestrador
 
-Total: **17 tools**.
+Total: **16 tools**.
 
-### 13 MCP existentes (re-exposed via tool calling)
+### 12 MCP read-only (re-exposed via tool calling)
 
-`buscar_legislacao`, `consultar_artigo`, `listar_artigos_por_tema`, `comparar_redacoes`, `fs_listar_normas`, `fs_listar_estrutura`, `fs_grep`, `fs_ler_dispositivo`, `fs_ler_intervalo`, `skill_listar`, `skill_carregar`, `skill_identificar_relevantes`, `skill_publicar`.
+`buscar_legislacao`, `consultar_artigo`, `listar_artigos_por_tema`, `comparar_redacoes`, `fs_listar_normas`, `fs_listar_estrutura`, `fs_grep`, `fs_ler_dispositivo`, `fs_ler_intervalo`, `skill_listar`, `skill_carregar`, `skill_identificar_relevantes`.
 
-Loop interno: `mcpToolToLlmTool(env, name, description)` em `engine.ts:54` pega o `zodSchema` direto do registry MCP e cria um `ToolForLLM`.
+`skill_publicar` fica fora do chat de propósito: é uma tool mutável que grava em R2 e pode alterar skills ativas.
+
+Loop interno: `engine.ts:buildTools()` cria tools a partir de `MCP_TOOLS` (leis/filesystem) e do registry de skills read-only, aceitando tanto JSON Schema quanto Zod.
 
 ### 2 agentes especialistas
 
@@ -116,7 +118,7 @@ Auditor, Redator, Analista, Esp-Reequilíbrio, Esp-Licitações **não** estão 
 4. **Engine streamText**:
    - Carrega histórico do DO.
    - Monta system prompt com info do documento.
-   - Define 17 tools.
+   - Define 16 tools.
    - Chama `llm.streamText` com `stopWhen: stepCountIs(8)`.
 
 5. **Para cada evento do stream**:
@@ -234,6 +236,6 @@ Cost tracker (`TrackedLLMClient`) pode ser plugado depois pra contabilizar e exp
 
 ## Como adicionar uma tool nova
 
-1. Se for filesystem/semantic/skill genérica: já está em `apps/mcp-server/src/mcp/tools/`. Basta `registerTool(...)` na boot — vira automaticamente disponível pro chat.
+1. Se for filesystem/semantic/skill genérica: já está em `apps/mcp-server/src/mcp/tools/`. Registre a tool na boot e adicione o nome à allowlist read-only do chat em `engine.ts`.
 2. Se for um agente especialista novo: adicionar wrapper em `engine.ts:buildTools()` seguindo o padrão de `consultar_pesquisador`.
 3. Se for específica do notebook (operação sobre o DO): adicionar método no `NotebookAgent` + wrapper em `engine.ts:buildTools()`.
