@@ -15,6 +15,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      force_all:
+        description: "Deploy todos os apps ignorando paths-filter"
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -52,7 +57,7 @@ jobs:
   deploy-mcp-server:
     name: Deploy mcp-server
     needs: changes
-    if: needs.changes.outputs.mcp-server == 'true'
+    if: needs.changes.outputs.mcp-server == 'true' || inputs.force_all == true
     runs-on: ubuntu-latest
     environment: vectorgov_t
     steps:
@@ -80,7 +85,7 @@ jobs:
   deploy-ingestion-api:
     name: Deploy ingestion-api
     needs: changes
-    if: needs.changes.outputs.ingestion-api == 'true'
+    if: needs.changes.outputs.ingestion-api == 'true' || inputs.force_all == true
     runs-on: ubuntu-latest
     environment: vectorgov_t
     steps:
@@ -106,7 +111,7 @@ jobs:
   deploy-web-ui:
     name: Deploy web-ui
     needs: changes
-    if: needs.changes.outputs.web-ui == 'true'
+    if: needs.changes.outputs.web-ui == 'true' || inputs.force_all == true
     runs-on: ubuntu-latest
     environment: vectorgov_t
     steps:
