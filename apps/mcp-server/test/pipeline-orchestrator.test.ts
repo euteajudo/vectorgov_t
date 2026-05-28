@@ -158,6 +158,15 @@ describe("runIngestionPipeline — fluxo feliz", () => {
     const { createStatus } = await import("../src/pipeline/status-store.js");
     await createStatus(env, { id, leiId: "lc-test-2025" });
 
+    // Semeia o cache KV de fs_listar_normas com um valor STALE. O pipeline
+    // deve invalidá-lo ao atualizar o _index.json (regressão: sem isso a
+    // norma recém-ingerida não apareceria na listagem por até 6h).
+    const { cacheGet, cacheSet } = await import("../src/lib/cache.js");
+    const { INDEX_CACHE_KEY } = await import(
+      "../src/mcp/tools/filesystem/fs-listar-normas.js"
+    );
+    await cacheSet(env, INDEX_CACHE_KEY, { normas: [] }, 3600);
+
     const pdfBlob = new Blob([new Uint8Array([0x25, 0x50, 0x44, 0x46])], {
       type: "application/pdf",
     });
@@ -178,6 +187,9 @@ describe("runIngestionPipeline — fluxo feliz", () => {
     expect(status?.progresso_pct).toBe(100);
     expect(status?.total_dispositivos).toBe(3);
     expect(status?.finalizado_em).toBeTruthy();
+
+    // Cache de listagem foi invalidado (não serve mais o valor stale).
+    expect(await cacheGet(env, INDEX_CACHE_KEY)).toBeNull();
 
     // D1 populado
     expect(env.DB.state.normas.size).toBe(1);

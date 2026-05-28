@@ -37,6 +37,8 @@ import type {
 } from "@vectorgov-t/schemas";
 import { embedBatch } from "../lib/batch-embedding.js";
 import { withR2Retry } from "../lib/retry.js";
+import { cacheDelete } from "../lib/cache.js";
+import { INDEX_CACHE_KEY } from "../mcp/tools/filesystem/fs-listar-normas.js";
 import { callContainerParse, type ParseInput } from "./container-client.js";
 import {
   appendWarning,
@@ -456,6 +458,15 @@ async function updateIndiceGlobal(env: Env, parse: ParseResult): Promise<void> {
       }),
     `updateIndiceGlobal`,
   );
+
+  // Invalida o cache KV de `fs_listar_normas` — sem isso, a norma recém
+  // ingerida só apareceria na listagem após o TTL de 6h. Best-effort:
+  // falha de KV não derruba a ingestão (D1/Vectorize são a fonte da verdade).
+  try {
+    await cacheDelete(env, INDEX_CACHE_KEY);
+  } catch {
+    // ignora — cache stale é tolerável; expira em 6h de qualquer modo.
+  }
 }
 
 /**

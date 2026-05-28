@@ -26,7 +26,12 @@ import { cacheGet, cacheSet } from "../../../lib/cache.js";
 
 /** TTL do cache do índice em segundos (6h). */
 const INDEX_CACHE_TTL = 6 * 60 * 60;
-const INDEX_CACHE_KEY = "fs:listar_normas:_index_v1";
+/**
+ * Chave do cache KV do catálogo. Exportada para que o pipeline de ingestão
+ * (orchestrator) possa INVALIDÁ-LA ao atualizar o `_index.json` — sem isso,
+ * normas recém-ingeridas só apareceriam na listagem após o TTL de 6h.
+ */
+export const INDEX_CACHE_KEY = "fs:listar_normas:_index_v1";
 const INDEX_R2_KEY = "_index.json";
 
 interface NormaEntry {
