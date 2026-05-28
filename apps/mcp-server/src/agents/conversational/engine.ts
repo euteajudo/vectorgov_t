@@ -26,6 +26,11 @@ import type {
 import { consoleLogger } from "../types.js";
 import { buildToolsForPEVS } from "../tools-adapter.js";
 import { extrairPeticaoDeTexto } from "./peticao-extractor.js";
+import { rodarAnalisePeticao } from "../run-analise.js";
+import {
+  PeticaoSchema,
+  type PeticaoRascunho,
+} from "@vectorgov-t/schemas";
 import type { NotebookAgent } from "../notebook-agent.js";
 import { MCP_TOOLS, type ToolDescriptor } from "../../mcp/tools/index.js";
 import {
@@ -112,6 +117,7 @@ export function buildTools(
   env: Env,
   llm: LLMClient,
   notebook: NotebookAgent,
+  apiKey: string | null = null,
 ): Record<string, ToolForLLM> {
   const tools: Record<string, ToolForLLM> = {};
 
@@ -300,6 +306,115 @@ export function buildTools(
     },
   };
 
+  // 6. Análise completa (PEVS) a partir do rascunho confirmado.
+  tools["analisar_reequilibrio"] = {
+    description:
+      "Roda a ANÁLISE COMPLETA de reequilíbrio (pesquisa a legislação, calcula, " +
+      "audita citações e gera veredito + fundamentação) a partir do rascunho " +
+      "extraído do documento. Use DEPOIS de extrair_peticao_do_documento e do " +
+      "usuário CONFIRMAR os dados. Passe em `correcoes` qualquer campo que o " +
+      "usuário tenha corrigido. A análise é persistida e fica consultável.",
+    inputSchema: z.object({
+      correcoes: z
+        .object({
+          contratante_razao_social: z.string().optional(),
+          contratado_razao_social: z.string().optional(),
+          contrato_numero: z.string().optional(),
+          contrato_objeto: z.string().optional(),
+          contrato_valor_centavos: z.number().int().nonnegative().optional(),
+          contrato_data_assinatura: z.string().optional(),
+          contrato_data_inicio_vigencia: z.string().optional(),
+          resumo_pedido: z.string().optional(),
+        })
+        .optional()
+        .describe("Campos corrigidos pelo usuário (sobrescrevem o rascunho)"),
+    }),
+    execute: async (input) => {
+      const i = input as { correcoes?: Partial<PeticaoRascunho> };
+      if (!apiKey) {
+        return {
+          erro: "Configure a chave Google (API key) no navegador para rodar a análise.",
+        };
+      }
+      const rascunho = await notebook.lerRascunho();
+      if (!rascunho) {
+        return {
+          erro: "Nenhum rascunho de petição. Use extrair_peticao_do_documento primeiro.",
+        };
+      }
+      const m: PeticaoRascunho = { ...rascunho, ...(i.correcoes ?? {}) };
+
+      // Validações duras antes de rodar (não roda às cegas).
+      if (!m.contrato_valor_centavos || m.contrato_valor_centavos <= 0) {
+        return {
+          erro: "Informe o valor do contrato (em reais) — é necessário para o cálculo.",
+          campos_faltando: ["contrato_valor_centavos"],
+        };
+      }
+      if (!m.resumo_pedido || m.resumo_pedido.trim().length < 50) {
+        return {
+          erro: "Descreva melhor o fato alegado (mínimo 50 caracteres) antes de analisar.",
+          campos_faltando: ["resumo_pedido"],
+        };
+      }
+
+      const hoje = new Date().toISOString().slice(0, 10);
+      const candidata = {
+        requerente:
+          m.requerente ?? m.contratado_razao_social ?? "Requerente não identificado",
+        contratante: {
+          razao_social: m.contratante_razao_social ?? "Órgão público contratante",
+          cnpj: m.contratante_cnpj ?? "",
+          ...(m.contratante_ente_federativo
+            ? { ente_federativo: m.contratante_ente_federativo }
+            : {}),
+        },
+        contratado: {
+          razao_social: m.contratado_razao_social ?? "Empresa requerente",
+          cnpj: m.contratado_cnpj ?? "",
+        },
+        contrato: {
+          numero: m.contrato_numero ?? "(s/n)",
+          modalidade: m.contrato_modalidade ?? "outro",
+          data_assinatura: m.contrato_data_assinatura ?? hoje,
+          data_inicio_vigencia:
+            m.contrato_data_inicio_vigencia ?? m.contrato_data_assinatura ?? hoje,
+          valor_centavos: m.contrato_valor_centavos,
+          objeto: m.contrato_objeto ?? "(objeto não especificado)",
+        },
+        fato_alegado: m.resumo_pedido,
+        base_legal_invocada: m.base_legal_invocada ?? [],
+      };
+
+      const parsed = PeticaoSchema.safeParse(candidata);
+      if (!parsed.success) {
+        return {
+          erro:
+            "Dados insuficientes para montar a petição: " +
+            parsed.error.issues
+              .map((iss) => iss.path.join("."))
+              .join(", "),
+        };
+      }
+
+      const { analise } = await rodarAnalisePeticao(env, parsed.data, apiKey);
+      return {
+        veredito: analise.veredito,
+        score_confianca: analise.score_confianca,
+        citacoes_aprovadas: analise.citacoes.filter(
+          (c) => c.status === "APROVADA",
+        ).length,
+        calculos: analise.calculos.map((c) => ({
+          descricao: c.descricao,
+          valor_final: c.valor_final,
+          unidade: c.unidade_final,
+          sucesso: c.sucesso,
+        })),
+        peticao_id: analise.peticao_id ?? analise.id,
+      };
+    },
+  };
+
   return tools;
 }
 
@@ -381,6 +496,8 @@ export interface ConversarOpts {
    * `gemini-3.5-flash`. Caller (notebook-agent) lê do KV antes de chamar.
    */
   modelo?: import("../llm/types.js").ModeloLLM;
+  /** Chave Google do request (WS subprotocol) — necessária para análise PEVS. */
+  apiKey?: string | null;
 }
 
 export async function conversar(opts: ConversarOpts): Promise<ResultadoConversa> {
@@ -388,7 +505,7 @@ export async function conversar(opts: ConversarOpts): Promise<ResultadoConversa>
   const modeloEscolhido = opts.modelo ?? "gemini-3.5-flash";
   const meta = await notebook.getMeta();
   const historico = await notebook.listarMensagens();
-  const tools = buildTools(env, llm, notebook);
+  const tools = buildTools(env, llm, notebook, opts.apiKey ?? null);
   const system = buildSystemPrompt({
     nome: meta.documento_nome,
     total_paginas: meta.documento_total_paginas,

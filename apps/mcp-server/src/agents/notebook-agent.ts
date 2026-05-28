@@ -683,6 +683,7 @@ export class NotebookAgent {
         onEvent: sendEvent,
         signal,
         modelo: cfg.modelos.chat_orquestrador,
+        apiKey,
       });
       await this.registrarMensagem({
         id: resultado.message_id,
