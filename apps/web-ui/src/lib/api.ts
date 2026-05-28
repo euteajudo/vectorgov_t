@@ -274,6 +274,73 @@ export async function listarSkills(): Promise<SkillListItem[]> {
 }
 
 /**
+ * Catálogo de normas indexadas (via tool MCP `fs_listar_normas`).
+ * Lê o `_index.json` do R2 — usado no dashboard para "normas indexadas".
+ */
+export async function listarNormas(): Promise<{
+  total: number;
+  normas: Array<{ norma_id: string; tipo: string; ementa: string | null }>;
+}> {
+  const res = await fetch(`${BASE}/mcp/v1`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "fs_listar_normas", arguments: {} },
+    }),
+  });
+  if (!res.ok) {
+    throw new ApiError(`${res.status}: ${res.statusText}`, res.status);
+  }
+  const data = (await res.json()) as {
+    result?: { content?: Array<{ text?: string }> };
+  };
+  const text = data.result?.content?.[0]?.text;
+  if (!text) return { total: 0, normas: [] };
+  const parsed = JSON.parse(text) as {
+    total?: number;
+    normas?: Array<{ norma_id: string; tipo: string; ementa: string | null }>;
+  };
+  return { total: parsed.total ?? 0, normas: parsed.normas ?? [] };
+}
+
+/**
+ * Estatísticas agregadas do dashboard (página inicial).
+ *
+ * Combina endpoints REST existentes + a tool MCP de normas. Resiliente:
+ * cada fonte falha de forma independente (Promise.allSettled) → o card
+ * mostra "—" quando a fonte está indisponível, sem derrubar o resto.
+ *
+ * Obs.: `pareceres` é contado sobre a primeira página grande do histórico
+ * (page_size=200) — exato enquanto o total couber nela.
+ */
+export interface DashboardStats {
+  peticoes: number | null;
+  pareceres: number | null;
+  skills: number | null;
+  normas: number | null;
+}
+
+export async function getDashboardStats(): Promise<DashboardStats> {
+  const [hist, skills, normas] = await Promise.allSettled([
+    listarHistorico({ page_size: 200 }),
+    listarSkills(),
+    listarNormas(),
+  ]);
+  const histVal = hist.status === "fulfilled" ? hist.value : null;
+  return {
+    peticoes: histVal ? histVal.total : null,
+    pareceres: histVal
+      ? histVal.items.filter((i) => i.tem_parecer).length
+      : null,
+    skills: skills.status === "fulfilled" ? skills.value.length : null,
+    normas: normas.status === "fulfilled" ? normas.value.total : null,
+  };
+}
+
+/**
  * Carrega o markdown completo de uma skill pelo nome canônico.
  */
 export async function carregarSkill(nome: string): Promise<SkillFull> {
