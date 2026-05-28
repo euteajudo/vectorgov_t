@@ -307,11 +307,150 @@ export const FsGrepOutput = z.object({
 export type FsGrepOutputT = z.infer<typeof FsGrepOutput>;
 
 // ============================================================================
+// Tool 10: calcular_reequilibrio_tributario — engine determinística pós-Reforma
+// ============================================================================
+
+/**
+ * Cálculo do diferencial de carga tributária entre o regime pré-Reforma
+ * (PIS/Cofins/ICMS/ISS) e o regime pós-Reforma (CBS + IBS) ao longo do
+ * período de transição (2026-2033+), com aplicação opcional do redutor
+ * de compras governamentais (LC 214/2025, Arts. 472-473 e 601 do Decreto
+ * 12955/2026).
+ */
+
+export const RegimeTributarioPreSchema = z.enum([
+  "lucro_real",
+  "lucro_presumido",
+  "simples_nacional",
+  "imune",
+]);
+export type RegimeTributarioPre = z.infer<typeof RegimeTributarioPreSchema>;
+
+export const EnteContratanteSchema = z.enum([
+  "uniao",
+  "estado",
+  "municipio",
+  "df",
+  "autarquia",
+  "fundacao_publica",
+  "nao_se_aplica",
+]);
+export type EnteContratante = z.infer<typeof EnteContratanteSchema>;
+
+export const CalcularReequilibrioInput = z
+  .object({
+    contrato: z.object({
+      numero: z.string().min(1),
+      valor_centavos: z.number().int().positive(),
+      data_assinatura: z.string().min(10),
+      vigencia_inicio: z.string().min(10),
+      vigencia_fim: z.string().min(10),
+      regime_tributario_pre: RegimeTributarioPreSchema,
+      is_compra_governamental: z.boolean(),
+      ente_contratante: EnteContratanteSchema,
+    }),
+    aliquotas_pre: z.object({
+      pis_pct: z.number().min(0).max(100).default(1.65),
+      cofins_pct: z.number().min(0).max(100).default(7.6),
+      icms_pct: z.number().min(0).max(100).default(0),
+      iss_pct: z.number().min(0).max(100).default(0),
+      irpj_csll_pct: z.number().min(0).max(100).default(0),
+    }),
+    parametros_calculo: z.object({
+      aliquotas_referencia_publicadas: z.object({
+        cbs_pct: z.number().min(0).max(100).nullable(),
+        ibs_pct: z.number().min(0).max(100).nullable(),
+      }),
+      redutor_compras_govern_pct: z.number().min(0).max(100).nullable(),
+      creditos_estimados_pct: z.number().min(0).max(100).default(0),
+    }),
+  })
+  .refine(
+    (i) => i.contrato.vigencia_fim >= i.contrato.vigencia_inicio,
+    {
+      message: "vigencia_fim deve ser >= vigencia_inicio",
+      path: ["contrato", "vigencia_fim"],
+    },
+  )
+  .refine(
+    (i) =>
+      !i.contrato.is_compra_governamental ||
+      i.contrato.ente_contratante !== "nao_se_aplica",
+    {
+      message:
+        "Compra governamental requer ente_contratante diferente de 'nao_se_aplica'",
+      path: ["contrato", "ente_contratante"],
+    },
+  );
+export type CalcularReequilibrioInputT = z.infer<
+  typeof CalcularReequilibrioInput
+>;
+
+export const CargaPosAnoSchema = z.object({
+  ano: z.number().int().min(2026).max(2050),
+  cbs_pct: z.number().min(0).max(100),
+  ibs_pct: z.number().min(0).max(100),
+  redutor_aplicado_pct: z.number().min(0).max(100).nullable(),
+  carga_bruta_pct: z.number().min(0).max(100),
+  carga_efetiva_pct: z.number().min(0).max(100),
+  compensacao_pis_cofins: z.boolean(),
+  fundamento: z.string().min(1),
+});
+export type CargaPosAno = z.infer<typeof CargaPosAnoSchema>;
+
+export const PassoMemoriaSchema = z.object({
+  passo: z.number().int().min(1),
+  descricao: z.string().min(1),
+  formula: z.string().min(1),
+  inputs: z.record(z.string(), z.number().finite()),
+  resultado: z.number().finite(),
+  unidade: z.string().min(1),
+});
+export type PassoMemoria = z.infer<typeof PassoMemoriaSchema>;
+
+export const BaseLegalItemSchema = z.object({
+  norma: z.string().min(1),
+  artigo: z.string().min(1),
+  resumo: z.string().min(1),
+});
+export type BaseLegalItem = z.infer<typeof BaseLegalItemSchema>;
+
+export const CalcularReequilibrioOutput = z.object({
+  sucesso: z.boolean(),
+  placeholder: z.literal(false),
+  carga_pre: z.object({
+    pct_total: z.number().min(0).max(100),
+    composicao: z.object({
+      pis_pct: z.number(),
+      cofins_pct: z.number(),
+      icms_pct: z.number(),
+      iss_pct: z.number(),
+      irpj_csll_pct: z.number(),
+    }),
+    base_legal: z.array(z.string()),
+  }),
+  carga_pos_por_ano: z.array(CargaPosAnoSchema),
+  diferencial: z.object({
+    pct_medio_ponderado: z.number(),
+    valor_anual_centavos: z.number().int(),
+    valor_remanescente_contrato_centavos: z.number().int(),
+    meses_remanescentes: z.number().int().min(0),
+  }),
+  memoria_calculo: z.array(PassoMemoriaSchema),
+  base_legal: z.array(BaseLegalItemSchema),
+  alertas: z.array(z.string()),
+  erro: z.string().nullable(),
+});
+export type CalcularReequilibrioOutputT = z.infer<
+  typeof CalcularReequilibrioOutput
+>;
+
+// ============================================================================
 // Catálogo agregado — útil para o handler MCP montar `tools/list`
 // ============================================================================
 
 /**
- * Lista de nomes das 9 tools registradas (snake_case conforme convenção MCP).
+ * Lista de nomes das 10 tools registradas (snake_case conforme convenção MCP).
  * Em sync com o registry em `apps/mcp-server/src/mcp/tools/registry.ts`.
  */
 export const MCP_TOOL_NAMES = [
@@ -324,5 +463,6 @@ export const MCP_TOOL_NAMES = [
   "fs_ler_dispositivo",
   "fs_ler_intervalo",
   "fs_grep",
+  "calcular_reequilibrio_tributario",
 ] as const;
 export type McpToolName = (typeof MCP_TOOL_NAMES)[number];
