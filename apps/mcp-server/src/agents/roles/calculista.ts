@@ -2,15 +2,14 @@
  * Calculista — papel 6/8.
  *
  * Responsabilidade:
- *  - Executar cálculos determinísticos (em Fase 4 será integrado com
- *    planilhas oficiais TCU + tributos pós-reforma).
- *  - Por ora (Fase 2), devolve placeholders válidos contra
- *    CalculoTributarioSchema.
+ *  - Executar cálculos determinísticos via tool MCP
+ *    `calcular_reequilibrio_tributario` (engine pura).
+ *  - O LLM monta os inputs (alíquotas pré, classificação do contrato,
+ *    alíquotas de referência publicadas) e a tool retorna carga pré,
+ *    carga pós ano-a-ano (regime transição 2026-2033+), diferencial
+ *    e valor de reequilíbrio em centavos.
  *
- * O Calculista é o único papel que combina LLM + lógica determinística:
- * o LLM monta a estrutura do pedido de cálculo (qual tipo, quais inputs),
- * e a engine determinística faz a aritmética. Aqui simulamos os dois
- * com o mock LLM.
+ * O Calculista é o único papel que combina LLM + lógica determinística.
  */
 import type { AgentRole, AgentContext, SkillFull } from "../types.js";
 import { montarSystemPrompt } from "../types.js";
@@ -29,11 +28,24 @@ const SYSTEM_BASE = `Você é o CALCULISTA do sistema multi-agente.
 Sua função é EXECUTAR cálculos de reequilíbrio econômico-financeiro.
 
 Regras DURAS:
-1. Cada cálculo precisa de descrição + inputs nomeados + memória passo-a-passo.
-2. sucesso=true exige valor_final preenchido + pelo menos 1 linha em memoria.
-3. sucesso=false exige campo erro preenchido + valor_final=null.
-4. placeholder=true até integração com engine real (Fase 4).
-5. Use centavos integers para evitar floats — em valor_final use number,
+1. Para cálculos de reequilíbrio decorrentes da Reforma Tributária
+   (EC 132/2023, LC 214/2025, Decreto 12955/2026), você DEVE chamar a tool
+   'calcular_reequilibrio_tributario' — NÃO calcule manualmente.
+2. Os inputs da tool incluem: alíquotas pré (PIS/Cofins/ICMS/ISS),
+   classificação do contrato (is_compra_governamental + ente_contratante),
+   alíquotas de referência CBS/IBS publicadas pelo Senado/TCU para o
+   ano-base e o redutor de compras governamentais.
+3. Cada cálculo no output precisa de descrição + inputs nomeados +
+   memória passo-a-passo (popule a partir de 'memoria_calculo' devolvida
+   pela tool).
+4. sucesso=true exige valor_final preenchido (use
+   'diferencial.valor_remanescente_contrato_centavos' convertido em BRL)
+   + pelo menos 1 linha em memoria.
+5. sucesso=false exige campo erro preenchido + valor_final=null.
+6. placeholder=false quando a tool foi efetivamente chamada e devolveu
+   sucesso=true; só use placeholder=true para cálculos que ainda NÃO têm
+   engine determinística disponível.
+7. Use centavos integers para evitar floats — em valor_final use number,
    mas garanta que o resultado é finito e não-NaN.`;
 
 export function criarCalculista(): AgentRole<
@@ -42,9 +54,9 @@ export function criarCalculista(): AgentRole<
 > {
   return {
     nome: "calculista",
-    papel: "Cálculos determinísticos (placeholder Fase 2)",
+    papel: "Cálculos determinísticos (engine reequilíbrio pós-Reforma)",
     systemPromptBase: SYSTEM_BASE,
-    toolsPermitidas: [],
+    toolsPermitidas: ["calcular_reequilibrio_tributario"],
     modelo: "gemini-3.5-flash",
     schemaOutput: ResultadoCalculistaSchema,
     async executar(
