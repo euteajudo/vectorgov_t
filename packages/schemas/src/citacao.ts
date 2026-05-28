@@ -80,6 +80,32 @@ export const CitacaoVerificadaSchema = z
     artigo: z.string().min(1, "artigo / identificador é obrigatório"),
 
     /**
+     * Slug canônico da norma (ex.: "lei-14133-2021"), quando conhecido.
+     *
+     * Preenchido pelo Pesquisador a partir dos resultados das tools de
+     * busca (que já trazem o `norma_id` do filesystem). Quando presente,
+     * o Auditor usa-o direto para verificar via `fs_ler_dispositivo`,
+     * dispensando o resolvedor heurístico.
+     */
+    norma_id: z.string().min(1).optional(),
+
+    /**
+     * Referência estruturada do dispositivo para chamada de tool.
+     *
+     * Preenchido pelo Pesquisador a partir das tools (artigo numérico do
+     * filesystem). Quando presente, o Auditor o usa direto em vez de
+     * parsear o campo `artigo` (string legível).
+     */
+    dispositivo: z
+      .object({
+        artigo: z.number().int().min(1),
+        paragrafo: z.union([z.number().int().min(0), z.string()]).optional(),
+        inciso: z.string().optional(),
+        alinea: z.string().optional(),
+      })
+      .optional(),
+
+    /**
      * Texto literal do dispositivo conforme aparece na fonte oficial.
      *
      * NÃO é resumo nem paráfrase — é a transcrição que o Auditor
