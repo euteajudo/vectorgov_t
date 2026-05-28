@@ -1,0 +1,125 @@
+name: Deploy to Cloudflare
+
+# Dispara em push para main. Cada job só roda se houver mudanças nos
+# diretórios relevantes (detectado por dorny/paths-filter).
+#
+# Secrets necessários no repo (Settings → Secrets and variables → Actions):
+#   - CLOUDFLARE_API_TOKEN  (token com Workers Edit + Pages Edit + D1 Edit)
+#   - CLOUDFLARE_ACCOUNT_ID
+#
+# Secrets dos Workers (GOOGLE_API_KEY, INGESTION_API_SECRET) NÃO vão aqui —
+# devem ser configurados uma vez via `wrangler secret put <NOME>` localmente
+# e persistem no Worker entre deploys.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  changes:
+    name: Detect changed apps
+    runs-on: ubuntu-latest
+    outputs:
+      mcp-server: ${{ steps.filter.outputs.mcp-server }}
+      ingestion-api: ${{ steps.filter.outputs.ingestion-api }}
+      web-ui: ${{ steps.filter.outputs.web-ui }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            mcp-server:
+              - 'apps/mcp-server/**'
+              - 'packages/schemas/**'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+            ingestion-api:
+              - 'apps/ingestion-api/**'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+            web-ui:
+              - 'apps/web-ui/**'
+              - 'packages/schemas/**'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+
+  deploy-mcp-server:
+    name: Deploy mcp-server
+    needs: changes
+    if: needs.changes.outputs.mcp-server == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm --filter @vectorgov-t/mcp-server typecheck
+      - name: Test
+        run: pnpm --filter @vectorgov-t/mcp-server test
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/mcp-server
+          command: deploy
+
+  deploy-ingestion-api:
+    name: Deploy ingestion-api
+    needs: changes
+    if: needs.changes.outputs.ingestion-api == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm --filter @vectorgov-t/ingestion-api typecheck
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/ingestion-api
+          command: deploy
+
+  deploy-web-ui:
+    name: Deploy web-ui
+    needs: changes
+    if: needs.changes.outputs.web-ui == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm --filter @vectorgov-t/web-ui typecheck
+      - name: Build + Deploy (OpenNext Cloudflare)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm --filter @vectorgov-t/web-ui pages:deploy
