@@ -42,6 +42,9 @@ function citacaoPendente(
   };
 }
 
+// Mock no CONTRATO REAL da tool: recebe { norma_id, artigo:number } e
+// devolve { texto } (ou objeto sem texto quando não encontra). Chave do
+// mapa: `${norma_id}|${artigo}`.
 function criarToolLer(
   mapaDispositivos: Record<string, string | undefined>,
 ): ToolMCP {
@@ -49,12 +52,12 @@ function criarToolLer(
     nome: "fs_ler_dispositivo",
     descricao: "Lê texto oficial de um dispositivo da base normativa",
     async executar(args) {
-      const chave = `${args["norma"]}|${args["artigo"]}`;
+      const chave = `${args["norma_id"]}|${args["artigo"]}`;
       const texto = mapaDispositivos[chave];
       if (texto === undefined) {
-        return { encontrado: false };
+        return { fonte: "d1" };
       }
-      return { encontrado: true, texto_oficial: texto };
+      return { texto, fonte: "d1" };
     },
   };
 }
@@ -82,7 +85,7 @@ function contextoDeTeste(tools: ToolMCP[]): AgentContext {
 describe("Auditor — verificação determinística", () => {
   it("APROVA quando texto literal bate com filesystem", async () => {
     const tool = criarToolLer({
-      "Lei 14.133/2021|art. 124": TEXTO_OFICIAL_124,
+      "lei-14133-2021|124": TEXTO_OFICIAL_124,
     });
     const auditor = criarAuditor();
     const ctx = contextoDeTeste([tool]);
@@ -98,7 +101,7 @@ describe("Auditor — verificação determinística", () => {
 
   it("REJEITA quando texto literal diverge", async () => {
     const tool = criarToolLer({
-      "Lei 14.133/2021|art. 124": TEXTO_OFICIAL_124,
+      "lei-14133-2021|124": TEXTO_OFICIAL_124,
     });
     const auditor = criarAuditor();
     const ctx = contextoDeTeste([tool]);
@@ -174,7 +177,7 @@ describe("Auditor — prompt envenenado", () => {
       }),
     });
     const tool = criarToolLer({
-      "Lei 14.133/2021|art. 124": TEXTO_OFICIAL_124,
+      "lei-14133-2021|124": TEXTO_OFICIAL_124,
     });
     const auditor = criarAuditor();
     const ctx: AgentContext = {

@@ -35,6 +35,11 @@ import {
   type RelatorioAuditor,
 } from "./_io-schemas.js";
 import type { CitacaoVerificada } from "@vectorgov-t/schemas";
+import {
+  resolverNormaId,
+  parseArtigoRef,
+  type ArtigoRef,
+} from "../../lib/norma-ref.js";
 
 export interface AuditorInput {
   /** Citações a verificar — vêm com status PENDENTE ou já preenchido. */
@@ -42,7 +47,8 @@ export interface AuditorInput {
 }
 
 const TOOL_LER = "fs_ler_dispositivo";
-const TOOLS_PERMITIDAS = [TOOL_LER];
+// fs_listar_normas é usada no fallback de resolução de norma_id.
+const TOOLS_PERMITIDAS = [TOOL_LER, "fs_listar_normas"];
 
 const SYSTEM_BASE = `Você é o AUDITOR JURÍDICO do sistema multi-agente.
 Sua função é VERIFICAR citações contra o filesystem (texto oficial das normas).
@@ -83,15 +89,48 @@ async function sha256Hex(s: string): Promise<string> {
 }
 
 /**
+ * Resolve a referência estruturada (norma_id + artigo numérico) que a tool
+ * `fs_ler_dispositivo` exige, a partir de uma citação.
+ *
+ * Prioriza a proveniência da citação (campos `norma_id`/`dispositivo`
+ * preenchidos pelo Pesquisador a partir das tools). Só recorre à resolução
+ * heurística quando esses campos estão ausentes (ex.: base legal digitada
+ * pelo usuário). Retorna `null` quando não consegue resolver — o chamador
+ * trata como REJEITADA segura.
+ */
+async function resolverRefDispositivo(
+  citacao: CitacaoVerificada,
+  tools: ToolMCP[],
+): Promise<{ norma_id: string; ref: ArtigoRef } | null> {
+  const norma_id =
+    citacao.norma_id ?? (await resolverNormaId(citacao.norma, tools));
+  if (!norma_id) return null;
+
+  const ref: ArtigoRef | null = citacao.dispositivo
+    ? {
+        artigo: citacao.dispositivo.artigo,
+        paragrafo: citacao.dispositivo.paragrafo,
+        inciso: citacao.dispositivo.inciso,
+        alinea: citacao.dispositivo.alinea,
+      }
+    : parseArtigoRef(citacao.artigo);
+  if (!ref) return null;
+
+  return { norma_id, ref };
+}
+
+/**
  * Verifica uma única citação contra a tool `fs_ler_dispositivo`.
  *
  * Retorna a citação com `status` e `motivo_rejeicao` atualizados.
- * NÃO usa o LLM — pura mecânica.
+ * NÃO usa o LLM — pura mecânica. `tools` é o catálogo completo (precisamos
+ * de `fs_ler_dispositivo` e, no fallback, `fs_listar_normas`).
  */
 async function verificarUmaCitacao(
   citacao: CitacaoVerificada,
-  toolLer: ToolMCP | undefined,
+  tools: ToolMCP[],
 ): Promise<CitacaoVerificada> {
+  const toolLer = tools.find((t) => t.nome === "fs_ler_dispositivo");
   if (!toolLer) {
     return {
       ...citacao,
@@ -99,20 +138,38 @@ async function verificarUmaCitacao(
       motivo_rejeicao: "Tool fs_ler_dispositivo indisponível no contexto",
     };
   }
-  try {
-    const resp = (await toolLer.executar({
-      norma: citacao.norma,
-      artigo: citacao.artigo,
-    })) as { texto_oficial?: string; encontrado?: boolean } | undefined;
 
-    if (!resp || resp.encontrado === false || !resp.texto_oficial) {
+  const resolvido = await resolverRefDispositivo(citacao, tools);
+  if (!resolvido) {
+    return {
+      ...citacao,
+      status: "REJEITADA",
+      motivo_rejeicao: `Não foi possível resolver norma/artigo: "${citacao.norma}" / "${citacao.artigo}"`,
+    };
+  }
+
+  try {
+    const args: Record<string, unknown> = {
+      norma_id: resolvido.norma_id,
+      artigo: resolvido.ref.artigo,
+    };
+    if (resolvido.ref.paragrafo !== undefined)
+      args.paragrafo = resolvido.ref.paragrafo;
+    if (resolvido.ref.inciso !== undefined) args.inciso = resolvido.ref.inciso;
+    if (resolvido.ref.alinea !== undefined) args.alinea = resolvido.ref.alinea;
+
+    const resp = (await toolLer.executar(args)) as
+      | { texto?: string }
+      | undefined;
+
+    if (!resp || !resp.texto) {
       return {
         ...citacao,
         status: "REJEITADA",
-        motivo_rejeicao: `Dispositivo inexistente: ${citacao.norma} ${citacao.artigo}`,
+        motivo_rejeicao: `Dispositivo inexistente: ${resolvido.norma_id} art. ${resolvido.ref.artigo}`,
       };
     }
-    const textoOficial = normalizarTexto(resp.texto_oficial);
+    const textoOficial = normalizarTexto(resp.texto);
     const textoCitado = normalizarTexto(citacao.texto_literal);
     const hashOficial = await sha256Hex(textoOficial);
     if (textoOficial === textoCitado) {
@@ -152,12 +209,10 @@ export function criarAuditor(): AgentRole<AuditorInput, RelatorioAuditor> {
       contexto: AgentContext,
       skills?: SkillFull[],
     ): Promise<RelatorioAuditor> {
-      const toolLer = contexto.tools.find((t) => t.nome === TOOL_LER);
-
       // FASE A: verificação determinística (NUNCA delega a LLM)
       const verificadas: CitacaoVerificada[] = [];
       for (const cit of input.citacoes) {
-        verificadas.push(await verificarUmaCitacao(cit, toolLer));
+        verificadas.push(await verificarUmaCitacao(cit, contexto.tools));
       }
       const rejeitadas = verificadas.filter((c) => c.status === "REJEITADA");
       const aprovadas = verificadas.filter((c) => c.status === "APROVADA");

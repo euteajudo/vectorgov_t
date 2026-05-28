@@ -94,15 +94,16 @@ function novaPeticao(): Peticao {
  * Tool fs_ler_dispositivo mock — devolve texto oficial controlado
  * pelo teste.
  */
+// Contrato REAL: { norma_id, artigo:number } → { texto }. Chave: `norma_id|artigo`.
 function criarToolLer(mapa: Record<string, string | undefined>): ToolMCP {
   return {
     nome: "fs_ler_dispositivo",
     descricao: "Lê texto oficial",
     async executar(args) {
-      const chave = `${args["norma"]}|${args["artigo"]}`;
+      const chave = `${args["norma_id"]}|${args["artigo"]}`;
       const v = mapa[chave];
-      if (v === undefined) return { encontrado: false };
-      return { encontrado: true, texto_oficial: v };
+      if (v === undefined) return { fonte: "d1" };
+      return { texto: v, fonte: "d1" };
     },
   };
 }
@@ -246,7 +247,7 @@ describe("PEVSEngine — Feature 1 (análise)", () => {
       status: "PENDENTE",
     };
     const llm = criarMockLLM(criarRespostasPadrao({ citacaoPesquisador: citacaoOk }));
-    const tool = criarToolLer({ "Lei 14.133/2021|art. 124": TEXTO_OFICIAL_124 });
+    const tool = criarToolLer({ "lei-14133-2021|124": TEXTO_OFICIAL_124 });
     const engine = new PEVSEngine({
       llm,
       sessionAgent,
@@ -305,7 +306,7 @@ describe("PEVSEngine — Feature 1 (análise)", () => {
       };
     };
     const llm = criarMockLLM(respostasBase);
-    const tool = criarToolLer({ "Lei 14.133/2021|art. 124": TEXTO_OFICIAL_124 });
+    const tool = criarToolLer({ "lei-14133-2021|124": TEXTO_OFICIAL_124 });
     const engine = new PEVSEngine({
       llm,
       sessionAgent,
@@ -338,7 +339,7 @@ describe("PEVSEngine — Feature 1 (análise)", () => {
     const llm = criarMockLLM(
       criarRespostasPadrao({ citacaoPesquisador: citacaoSempreBad }),
     );
-    const tool = criarToolLer({ "Lei 14.133/2021|art. 124": TEXTO_OFICIAL_124 });
+    const tool = criarToolLer({ "lei-14133-2021|124": TEXTO_OFICIAL_124 });
     const engine = new PEVSEngine({
       llm,
       sessionAgent,
@@ -375,7 +376,7 @@ describe("PEVSEngine — Feature 2 (parecer)", () => {
       status: "PENDENTE",
     };
     const llm = criarMockLLM(criarRespostasPadrao({ citacaoPesquisador: citacaoOk }));
-    const tool = criarToolLer({ "Lei 14.133/2021|art. 124": TEXTO_OFICIAL_124 });
+    const tool = criarToolLer({ "lei-14133-2021|124": TEXTO_OFICIAL_124 });
     const engine = new PEVSEngine({
       llm,
       sessionAgent,
