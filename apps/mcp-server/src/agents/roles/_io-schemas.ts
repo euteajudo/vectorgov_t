@@ -49,6 +49,42 @@ export type PlanoOrquestrador = z.infer<typeof PlanoOrquestradorSchema>;
 
 /* ---------- Pesquisador ---------- */
 
+/**
+ * Passo 1 do Pesquisador — o LLM transforma a pergunta focal em um plano
+ * de busca (queries semânticas + alvos diretos opcionais). Quem executa as
+ * buscas é o código, não o LLM.
+ */
+export const PlanoBuscaPesquisadorSchema = z.object({
+  queries: z
+    .array(z.string().min(3))
+    .min(1, "ao menos 1 query")
+    .max(5, "no máximo 5 queries"),
+  /** Alvos diretos (quando a pergunta já cita norma+artigo explícito). */
+  normas_alvo: z
+    .array(
+      z.object({
+        norma: z.string().min(1),
+        artigo: z.number().int().min(1),
+      }),
+    )
+    .default([]),
+});
+export type PlanoBuscaPesquisador = z.infer<typeof PlanoBuscaPesquisadorSchema>;
+
+/**
+ * Passo 3 do Pesquisador — o LLM recebe os snippets REAIS recuperados pelas
+ * tools (numerados) e apenas seleciona quais são pertinentes. NÃO produz
+ * texto de citação (isso vem dos snippets, evitando alucinação).
+ */
+export const SelecaoCitacoesSchema = z.object({
+  indices_relevantes: z
+    .array(z.number().int().min(0))
+    .default([])
+    .describe("Índices (0-based) dos snippets pertinentes à pergunta focal"),
+  justificativa: z.string().min(1).default("(sem justificativa)"),
+});
+export type SelecaoCitacoes = z.infer<typeof SelecaoCitacoesSchema>;
+
 export const ResultadoPesquisaSchema = z.object({
   /** Resumos textuais de cada trecho relevante encontrado. */
   achados: z

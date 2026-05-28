@@ -115,9 +115,43 @@ function criarToolLer(mapa: Record<string, string | undefined>): ToolMCP {
  * Cada handler é função para permitir contagem de chamadas (closure
  * com contador) — alguns testes precisam saber em qual retry estamos.
  */
-function criarRespostasPadrao(opts: {
-  citacaoPesquisador: CitacaoVerificada;
-}) {
+/**
+ * Mock da tool `buscar_legislacao`. Devolve sempre 1 snippet do art. 124 da
+ * Lei 14.133/2021, com `texto` controlável (string fixa ou função por chamada,
+ * usada nos testes de retry). É a partir desse texto que o Auditor decide
+ * APROVADA/REJEITADA — substitui o antigo controle via `citacaoPesquisador`.
+ */
+function criarToolBuscar(texto: string | (() => string)): ToolMCP {
+  return {
+    nome: "buscar_legislacao",
+    descricao: "Busca híbrida na legislação",
+    async executar() {
+      const t = typeof texto === "function" ? texto() : texto;
+      return {
+        resultados: [
+          {
+            citacao: {
+              norma_id: "lei-14133-2021",
+              norma_label: "Lei 14.133/2021",
+              artigo: 124,
+              paragrafo: null,
+              inciso: null,
+              alinea: null,
+              hierarquia_path: "art124",
+            },
+            texto: t,
+            score: 0.95,
+          },
+        ],
+        total: 1,
+        query_normalizada: "reequilibrio",
+        metodo: "hybrid_rrf_rerank",
+      };
+    },
+  };
+}
+
+function criarRespostasPadrao() {
   const respostas: Record<string, (o: { messages: { content: string }[] }) => unknown> = {
     "orquestrador.plan": () => ({
       resumo_problema: "Reequilíbrio de contrato de obra viária",
@@ -132,16 +166,15 @@ function criarRespostasPadrao(opts: {
       ],
       estrategia: "Pesquisar primeiro, depois interpretar e auditar",
     }),
-    "pesquisador.coleta": () => ({
-      achados: [
-        {
-          fonte: "Lei 14.133/2021 art. 124",
-          trecho: TEXTO_OFICIAL_124,
-          relevancia: 0.95,
-        },
-      ],
-      citacoes_candidatas: [opts.citacaoPesquisador],
-      tools_chamadas: ["busca_semantica", "fs_ler_dispositivo"],
+    // O Pesquisador agora faz 2 chamadas LLM (planejar + selecionar); as
+    // citações vêm dos snippets reais da tool buscar_legislacao.
+    "pesquisador.planejar_busca": () => ({
+      queries: ["reequilíbrio art 124 Lei 14.133"],
+      normas_alvo: [],
+    }),
+    "pesquisador.selecionar": () => ({
+      indices_relevantes: [0],
+      justificativa: "trecho pertinente ao reequilíbrio",
     }),
     "analista.interpretar": () => ({
       interpretacao:
@@ -237,21 +270,12 @@ describe("PEVSEngine — Feature 1 (análise)", () => {
   it("caminho feliz: produz análise procedente sem retry", async () => {
     const state = createInMemoryState();
     const sessionAgent = new SessionAgent(state, createTestEnv());
-    const citacaoOk: CitacaoVerificada = {
-      id: "cit-ok",
-      tipo_fonte: "lei",
-      norma: "Lei 14.133/2021",
-      artigo: "art. 124",
-      texto_literal: TEXTO_OFICIAL_124,
-      hash: HASH_PLACEHOLDER,
-      status: "PENDENTE",
-    };
-    const llm = criarMockLLM(criarRespostasPadrao({ citacaoPesquisador: citacaoOk }));
+    const llm = criarMockLLM(criarRespostasPadrao());
     const tool = criarToolLer({ "lei-14133-2021|124": TEXTO_OFICIAL_124 });
     const engine = new PEVSEngine({
       llm,
       sessionAgent,
-      tools: [tool, toolFiscalMCP()],
+      tools: [tool, toolFiscalMCP(), criarToolBuscar(TEXTO_OFICIAL_124)],
       logger: loggerSilencioso,
       gerarUuid: uuidSequencial(),
       now: () => new Date("2026-05-26T12:00:00.000Z"),
@@ -274,43 +298,22 @@ describe("PEVSEngine — Feature 1 (análise)", () => {
     const state = createInMemoryState();
     const sessionAgent = new SessionAgent(state, createTestEnv());
 
-    // Pesquisador retorna texto INCORRETO na 1ª chamada, CORRETO da 2ª em diante
-    let chamadasPesquisador = 0;
-    const citacaoBad: CitacaoVerificada = {
-      id: "cit-bad",
-      tipo_fonte: "lei",
-      norma: "Lei 14.133/2021",
-      artigo: "art. 124",
-      texto_literal: "TEXTO ERRADO inventado pelo agente",
-      hash: HASH_PLACEHOLDER,
-      status: "PENDENTE",
-    };
-    const citacaoOk: CitacaoVerificada = {
-      ...citacaoBad,
-      id: "cit-ok",
-      texto_literal: TEXTO_OFICIAL_124,
-    };
-    const respostasBase = criarRespostasPadrao({ citacaoPesquisador: citacaoOk });
-    respostasBase["pesquisador.coleta"] = () => {
-      chamadasPesquisador++;
-      return {
-        achados: [
-          {
-            fonte: "Lei 14.133/2021 art. 124",
-            trecho: TEXTO_OFICIAL_124,
-            relevancia: 0.9,
-          },
-        ],
-        citacoes_candidatas: [chamadasPesquisador === 1 ? citacaoBad : citacaoOk],
-        tools_chamadas: ["busca_semantica"],
-      };
-    };
-    const llm = criarMockLLM(respostasBase);
+    // buscar_legislacao retorna texto INCORRETO na 1ª chamada, CORRETO da 2ª.
+    // Cada execução do Pesquisador chama buscar 1x (1 query) → o retry
+    // re-executa o Pesquisador, gerando a 2ª chamada.
+    let chamadasBuscar = 0;
+    const toolBuscar = criarToolBuscar(() => {
+      chamadasBuscar++;
+      return chamadasBuscar === 1
+        ? "TEXTO ERRADO que não bate com o filesystem"
+        : TEXTO_OFICIAL_124;
+    });
+    const llm = criarMockLLM(criarRespostasPadrao());
     const tool = criarToolLer({ "lei-14133-2021|124": TEXTO_OFICIAL_124 });
     const engine = new PEVSEngine({
       llm,
       sessionAgent,
-      tools: [tool, toolFiscalMCP()],
+      tools: [tool, toolFiscalMCP(), toolBuscar],
       logger: loggerSilencioso,
       gerarUuid: uuidSequencial(),
       now: () => new Date("2026-05-26T12:00:00.000Z"),
@@ -321,29 +324,19 @@ describe("PEVSEngine — Feature 1 (análise)", () => {
     expect(retries_executados).toBe(1);
     expect(analise.veredito).toBe("procedente");
     expect(analise.citacoes[0]!.status).toBe("APROVADA");
-    expect(chamadasPesquisador).toBe(2);
+    expect(chamadasBuscar).toBe(2);
   });
 
   it("esgota retries: 3 retries todos REJEITADOS → veredito inconclusiva", async () => {
     const state = createInMemoryState();
     const sessionAgent = new SessionAgent(state, createTestEnv());
-    const citacaoSempreBad: CitacaoVerificada = {
-      id: "cit-bad",
-      tipo_fonte: "lei",
-      norma: "Lei 14.133/2021",
-      artigo: "art. 124",
-      texto_literal: "TEXTO QUE NUNCA BATE com filesystem",
-      hash: HASH_PLACEHOLDER,
-      status: "PENDENTE",
-    };
-    const llm = criarMockLLM(
-      criarRespostasPadrao({ citacaoPesquisador: citacaoSempreBad }),
-    );
+    const llm = criarMockLLM(criarRespostasPadrao());
     const tool = criarToolLer({ "lei-14133-2021|124": TEXTO_OFICIAL_124 });
     const engine = new PEVSEngine({
       llm,
       sessionAgent,
-      tools: [tool, toolFiscalMCP()],
+      // buscar sempre devolve texto que NÃO bate → toda citação REJEITADA.
+      tools: [tool, toolFiscalMCP(), criarToolBuscar("TEXTO QUE NUNCA BATE com filesystem")],
       logger: loggerSilencioso,
       maxRetries: 3,
       gerarUuid: uuidSequencial(),
@@ -366,21 +359,12 @@ describe("PEVSEngine — Feature 2 (parecer)", () => {
     const state = createInMemoryState();
     const sessionAgent = new SessionAgent(state, createTestEnv());
     // 1) primeiro executa Feature 1 para ter uma análise persistida
-    const citacaoOk: CitacaoVerificada = {
-      id: "cit-ok",
-      tipo_fonte: "lei",
-      norma: "Lei 14.133/2021",
-      artigo: "art. 124",
-      texto_literal: TEXTO_OFICIAL_124,
-      hash: HASH_PLACEHOLDER,
-      status: "PENDENTE",
-    };
-    const llm = criarMockLLM(criarRespostasPadrao({ citacaoPesquisador: citacaoOk }));
+    const llm = criarMockLLM(criarRespostasPadrao());
     const tool = criarToolLer({ "lei-14133-2021|124": TEXTO_OFICIAL_124 });
     const engine = new PEVSEngine({
       llm,
       sessionAgent,
-      tools: [tool, toolFiscalMCP()],
+      tools: [tool, toolFiscalMCP(), criarToolBuscar(TEXTO_OFICIAL_124)],
       logger: loggerSilencioso,
       gerarUuid: uuidSequencial(),
       now: () => new Date("2026-05-26T12:00:00.000Z"),
