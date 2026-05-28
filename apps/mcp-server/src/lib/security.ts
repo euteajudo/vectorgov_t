@@ -16,8 +16,11 @@
 export function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+    // `X-Google-API-Key` é usado pelos handlers de chat/petição/parecer
+    // pra receber a API key do browser sem persistir no servidor.
+    "Access-Control-Allow-Headers":
+      "Content-Type, Authorization, X-Requested-With, X-Google-API-Key",
     "Access-Control-Max-Age": "86400",
   };
 }
