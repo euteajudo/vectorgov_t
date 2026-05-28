@@ -28,12 +28,11 @@ import {
   type AnaliseReequilibrio,
 } from "@vectorgov-t/schemas";
 import { extractApiKey } from "../lib/api-key.js";
-import { getModelConfig } from "../lib/model-config.js";
-import { GoogleLLMClient } from "../agents/llm/google.js";
-import { PEVSEngine, type DecisaoFeature2 } from "../agents/pevs-engine.js";
-import { buildToolsForPEVS } from "../agents/tools-adapter.js";
-import { getSessionAgentClient } from "../agents/session-loader.js";
-import type { SessionAgent } from "../agents/session-agent.js";
+import { type DecisaoFeature2 } from "../agents/pevs-engine.js";
+import {
+  rodarAnalisePeticao,
+  criarEnginePEVS,
+} from "../agents/run-analise.js";
 
 /**
  * Tamanho máximo de PDF aceito (bytes). Igual ao endpoint de ingestão.
@@ -622,19 +621,7 @@ async function rodarPEVSReal(
     (async () => {
       let curr = record;
       try {
-        const llm = new GoogleLLMClient(apiKey);
-        const cfg = await getModelConfig(env);
-        const tools = buildToolsForPEVS(env);
-        const sessionAgent = getSessionAgentClient(env);
-
-        const engine = new PEVSEngine({
-          llm,
-          // SessionAgentClient implementa só os métodos que o engine usa,
-          // mas o TS exige a interface completa. Como o engine só toca
-          // `analisarPeticao` no F1, o cast é seguro.
-          sessionAgent: sessionAgent as unknown as SessionAgent,
-          tools,
-          modelos: cfg.modelos,
+        const { analise } = await rodarAnalisePeticao(env, peticao, apiKey, {
           onFase: async (fase, pct, extra) => {
             curr = {
               ...curr,
@@ -648,8 +635,6 @@ async function rodarPEVSReal(
             await writeRecord(env, curr);
           },
         });
-
-        const { analise } = await engine.executarFeature1(peticao);
         curr = {
           ...curr,
           fase: "done",
@@ -882,17 +867,7 @@ export async function handleGerarParecer(
   };
 
   try {
-    const llm = new GoogleLLMClient(apiKey);
-    const cfg = await getModelConfig(env);
-    const tools = buildToolsForPEVS(env);
-    const sessionAgent = getSessionAgentClient(env);
-
-    const engine = new PEVSEngine({
-      llm,
-      sessionAgent: sessionAgent as unknown as SessionAgent,
-      tools,
-      modelos: cfg.modelos,
-    });
+    const engine = await criarEnginePEVS(env, apiKey);
     const { parecer } = await engine.executarFeature2(analise, decisao);
 
     const updated: PeticaoRecord = {

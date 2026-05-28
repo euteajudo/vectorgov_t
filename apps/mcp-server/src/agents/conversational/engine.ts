@@ -24,6 +24,7 @@ import type {
   ToolForLLM,
 } from "../llm/index.js";
 import { consoleLogger } from "../types.js";
+import { buildToolsForPEVS } from "../tools-adapter.js";
 import type { NotebookAgent } from "../notebook-agent.js";
 import { MCP_TOOLS, type ToolDescriptor } from "../../mcp/tools/index.js";
 import {
@@ -105,7 +106,8 @@ function mcpSkillToolToLlmTool(
 /**
  * Constrói o map de tools que será passado pro streamText.
  */
-function buildTools(
+// Exportada para teste (verificação das tools do chat em isolamento).
+export function buildTools(
   env: Env,
   llm: LLMClient,
   notebook: NotebookAgent,
@@ -185,29 +187,33 @@ function buildTools(
     execute: async (input) => {
       const i = input as { descricao_pedido: string; contexto?: string };
       const calculista = criarCalculista();
-      // O calculista hoje recebe peticao + contexto_pedido. Como em chat
-      // livre não temos peticao estruturada, passamos uma peticao mínima
-      // sintética. O calculista é placeholder (Fase 2) — ele lê o contexto.
+      // Petição mínima sintética para o chat livre: o Calculista extrai os
+      // inputs do fato_alegado/contexto e invoca a tool determinística real.
+      // valor_centavos default 0 — o usuário deve informar o valor no pedido
+      // para o cálculo render números (senão o reequilíbrio sai zerado).
       const peticaoSintetica = {
         id: "00000000-0000-4000-8000-000000000000",
+        requerente: "(chat livre)",
         contratante: {
           razao_social: "(não informado em chat livre)",
-          cnpj: "00.000.000/0001-00",
+          cnpj: "",
         },
         contratado: {
           razao_social: "(não informado em chat livre)",
-          cnpj: "00.000.000/0001-00",
+          cnpj: "",
         },
         contrato: {
           numero: "(chat)",
           modalidade: "pregao_eletronico",
-          objeto: "(chat livre)",
+          objeto: i.contexto ?? "(chat livre)",
           valor_centavos: 0,
-          assinatura: "2024-01-01",
+          data_assinatura: "2024-01-01",
+          data_inicio_vigencia: "2024-01-01",
         },
         fato_alegado: i.descricao_pedido,
         base_legal_invocada: [],
-        documentos: [],
+        calculos_apresentados: [],
+        anexos_urls: [],
       };
       const result = await calculista.executar(
         {
@@ -215,7 +221,10 @@ function buildTools(
           contexto_pedido: i.contexto ?? i.descricao_pedido,
         },
         {
-          tools: [],
+          // Injeta o catálogo real (inclui calcular_reequilibrio_tributario)
+          // para o Calculista executar a engine determinística — sem isso
+          // ele cairia em fallback placeholder.
+          tools: buildToolsForPEVS(env),
           llm,
           logger: consoleLogger,
           sessionId: notebook["state"]?.id?.toString?.() ?? "notebook",
