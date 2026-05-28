@@ -176,3 +176,60 @@ export const PeticaoSchema = z
   );
 
 export type Peticao = z.infer<typeof PeticaoSchema>;
+
+/**
+ * Rascunho de petição extraído de um documento (PDF) por LLM.
+ *
+ * Diferente de `PeticaoSchema`: todos os campos são OPCIONAIS porque a
+ * extração pode não encontrar tudo. O usuário confirma/corrige antes de a
+ * análise rodar. `campos_incertos` lista o que o LLM não achou com
+ * confiança; `resumo_pedido` é a síntese do que a empresa pede (vira a
+ * base de `fato_alegado`).
+ *
+ * Valores monetários continuam em centavos. `valor_centavos` fica null
+ * quando o LLM não identifica o valor — NUNCA deve ser inventado.
+ */
+export const PeticaoRascunhoSchema = z.object({
+  requerente: z.string().nullable().default(null),
+  contratante_razao_social: z.string().nullable().default(null),
+  contratante_cnpj: z.string().nullable().default(null),
+  contratante_ente_federativo: z
+    .enum(["uniao", "estado", "municipio", "df", "autarquia", "empresa_publica", "privada"])
+    .nullable()
+    .default(null),
+  contratado_razao_social: z.string().nullable().default(null),
+  contratado_cnpj: z.string().nullable().default(null),
+  contrato_numero: z.string().nullable().default(null),
+  contrato_modalidade: z
+    .enum([
+      "pregao_eletronico",
+      "pregao_presencial",
+      "concorrencia",
+      "dispensa",
+      "inexigibilidade",
+      "concurso",
+      "leilao",
+      "dialogo_competitivo",
+      "outro",
+    ])
+    .nullable()
+    .default(null),
+  contrato_objeto: z.string().nullable().default(null),
+  contrato_valor_centavos: z.number().int().nonnegative().nullable().default(null),
+  contrato_data_assinatura: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable()
+    .default(null),
+  contrato_data_inicio_vigencia: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable()
+    .default(null),
+  /** Síntese do pedido da empresa — base para o fato_alegado da análise. */
+  resumo_pedido: z.string().default(""),
+  base_legal_invocada: z.array(z.string()).default([]),
+  /** Campos que o LLM não encontrou com confiança (a confirmar pelo usuário). */
+  campos_incertos: z.array(z.string()).default([]),
+});
+export type PeticaoRascunho = z.infer<typeof PeticaoRascunhoSchema>;

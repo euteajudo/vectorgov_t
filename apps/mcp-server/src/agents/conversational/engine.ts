@@ -25,6 +25,7 @@ import type {
 } from "../llm/index.js";
 import { consoleLogger } from "../types.js";
 import { buildToolsForPEVS } from "../tools-adapter.js";
+import { extrairPeticaoDeTexto } from "./peticao-extractor.js";
 import type { NotebookAgent } from "../notebook-agent.js";
 import { MCP_TOOLS, type ToolDescriptor } from "../../mcp/tools/index.js";
 import {
@@ -264,6 +265,38 @@ export function buildTools(
       const i = input as { max_chars?: number };
       const texto = await notebook.lerDocumentoInteiro(i.max_chars);
       return { texto, total_chars: texto.length };
+    },
+  };
+
+  // 5. Extração de petição do documento (passo 1 da análise de reequilíbrio).
+  tools["extrair_peticao_do_documento"] = {
+    description:
+      "Lê o documento anexado e extrai os dados da petição de reequilíbrio " +
+      "(órgão, empresa, contrato, valor, fato alegado). Use ANTES de analisar " +
+      "um pedido de reequilíbrio. Retorna os campos para o usuário CONFIRMAR " +
+      "ou corrigir; campos_incertos lista o que não foi achado com confiança.",
+    inputSchema: z.object({
+      pedido_usuario: z
+        .string()
+        .max(2000)
+        .optional()
+        .describe("O que o usuário pediu, em linguagem natural"),
+    }),
+    execute: async (input) => {
+      const i = input as { pedido_usuario?: string };
+      const texto = await notebook.lerDocumentoInteiro();
+      if (!texto || texto.trim().length === 0) {
+        return {
+          erro: "Nenhum documento anexado. Peça o upload do pedido de reequilíbrio.",
+        };
+      }
+      const rascunho = await extrairPeticaoDeTexto(
+        texto,
+        i.pedido_usuario ?? "",
+        llm,
+      );
+      await notebook.salvarRascunho(rascunho);
+      return { rascunho };
     },
   };
 

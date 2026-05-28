@@ -39,6 +39,8 @@ import {
   CriarNotebookInputSchema,
   MensagemSchema,
   NotebookMetaSchema,
+  PeticaoRascunhoSchema,
+  type PeticaoRascunho,
 } from "@vectorgov-t/schemas";
 import { embedBatch } from "../lib/batch-embedding.js";
 import { GoogleLLMClient } from "./llm/google.js";
@@ -49,7 +51,9 @@ import {
 } from "../lib/api-key.js";
 import { getModelConfig } from "../lib/model-config.js";
 
-const STORAGE_FLAG_SCHEMA = "schema_aplicado_v1";
+// v2: adiciona a tabela peticao_rascunho. CREATE IF NOT EXISTS é idempotente,
+// então re-aplicar o schema em notebooks antigos só cria a tabela faltante.
+const STORAGE_FLAG_SCHEMA = "schema_aplicado_v2";
 
 /**
  * Página de um documento — texto cru extraído pelo Container Python.
@@ -274,6 +278,14 @@ export class NotebookAgent {
         `CREATE INDEX IF NOT EXISTS idx_mensagem_notebook_criado
            ON mensagem(notebook_id, criado_em ASC);`,
       );
+      // Rascunho de petição extraído do documento (1 por notebook, sobrescreve).
+      this.sql.exec(
+        `CREATE TABLE IF NOT EXISTS peticao_rascunho (
+           notebook_id TEXT PRIMARY KEY,
+           rascunho_json TEXT NOT NULL,
+           atualizado_em INTEGER NOT NULL
+         );`,
+      );
       await this.state.storage.put(STORAGE_FLAG_SCHEMA, true);
     })();
     return this.schemaProntoPromise;
@@ -406,6 +418,45 @@ export class NotebookAgent {
       total_chars: totalChars,
       pdf_hash: input.pdf_hash,
     };
+  }
+
+  /**
+   * Salva (sobrescreve) o rascunho de petição extraído do documento.
+   * 1 rascunho por notebook — a confirmação do usuário acontece no chat
+   * antes de a análise rodar.
+   */
+  async salvarRascunho(rascunho: PeticaoRascunho): Promise<void> {
+    await this.garantirSchema();
+    const id = this.notebookId();
+    this.sql.exec(
+      `INSERT OR REPLACE INTO peticao_rascunho
+         (notebook_id, rascunho_json, atualizado_em)
+       VALUES (?, ?, ?)`,
+      id,
+      JSON.stringify(rascunho),
+      Date.now(),
+    );
+  }
+
+  /**
+   * Lê o rascunho de petição salvo, ou null se ainda não houver.
+   */
+  async lerRascunho(): Promise<PeticaoRascunho | null> {
+    await this.garantirSchema();
+    const id = this.notebookId();
+    const rows = this.sql
+      .exec(
+        `SELECT rascunho_json FROM peticao_rascunho WHERE notebook_id = ? LIMIT 1`,
+        id,
+      )
+      .toArray();
+    if (rows.length === 0) return null;
+    try {
+      const raw = JSON.parse(String(rows[0]!["rascunho_json"]));
+      return PeticaoRascunhoSchema.parse(raw);
+    } catch {
+      return null;
+    }
   }
 
   /**
