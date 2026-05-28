@@ -20,11 +20,23 @@ import { criarMockLLM } from "../../src/agents/llm/mock.js";
 import { createTestEnv } from "../_fakes.js";
 import { createInMemoryState } from "./_in-memory-state.js";
 import type { ToolMCP, AgentLogger } from "../../src/agents/types.js";
+import { calcularReequilibrioTool } from "../../src/mcp/tools/fiscal/index.js";
+import type { Env } from "../../src/env.js";
 import {
   PeticaoSchema,
   type Peticao,
   type CitacaoVerificada,
 } from "@vectorgov-t/schemas";
+
+/** Tool fiscal real (engine determinística) — não usa env. */
+function toolFiscalMCP(): ToolMCP {
+  return {
+    nome: calcularReequilibrioTool.name,
+    descricao: calcularReequilibrioTool.description,
+    executar: async (args) =>
+      calcularReequilibrioTool.handler(args, {} as Env),
+  };
+}
 
 // UUIDs determinísticos por ordem de chamada
 const UUIDS = [
@@ -142,22 +154,26 @@ function criarRespostasPadrao(opts: {
       jurisprudencia_tcu_aplicavel: ["Acórdão 1234/2023-Plenário"],
       pontos_de_atencao: ["Realizar contraditório formal"],
     }),
-    "calculista.calcular": () => ({
-      calculos: [
-        {
-          id: "calc-1",
-          tipo: "reequilibrio_economico",
-          descricao: "Variação INCC asfalto 40%",
-          inputs: { valor_base: 500000, indice: 1.4 },
-          memoria: [
-            { descricao: "Valor base × índice", valor: 700000, unidade: "BRL" },
-          ],
-          valor_final: 700000,
-          unidade_final: "BRL",
-          sucesso: true,
-          placeholder: true,
-        },
-      ],
+    // O Calculista agora extrai inputs estruturados; a tool fiscal real
+    // (injetada em tools) faz a aritmética. Vigência fim em 2026 garante
+    // cálculo bem-sucedido sem alíquotas de referência (regime piloto).
+    "calculista.extrair_inputs": () => ({
+      regime_tributario_pre: "lucro_real",
+      aliquotas_pre: {
+        pis_pct: 1.65,
+        cofins_pct: 7.6,
+        icms_pct: 0,
+        iss_pct: 5,
+        irpj_csll_pct: 0,
+      },
+      is_compra_governamental: true,
+      ente_contratante: "municipio",
+      vigencia_fim: "2026-12-31",
+      aliquotas_referencia_publicadas: { cbs_pct: null, ibs_pct: null },
+      redutor_compras_govern_pct: null,
+      creditos_estimados_pct: 0,
+      justificativa:
+        "Lucro real (PIS 1,65% + Cofins 7,6%); serviço com ISS 5%; contrato municipal (compra governamental).",
     }),
     "esp_reequilibrio.integrar": () => ({
       sintese:
@@ -234,7 +250,7 @@ describe("PEVSEngine — Feature 1 (análise)", () => {
     const engine = new PEVSEngine({
       llm,
       sessionAgent,
-      tools: [tool],
+      tools: [tool, toolFiscalMCP()],
       logger: loggerSilencioso,
       gerarUuid: uuidSequencial(),
       now: () => new Date("2026-05-26T12:00:00.000Z"),
@@ -293,7 +309,7 @@ describe("PEVSEngine — Feature 1 (análise)", () => {
     const engine = new PEVSEngine({
       llm,
       sessionAgent,
-      tools: [tool],
+      tools: [tool, toolFiscalMCP()],
       logger: loggerSilencioso,
       gerarUuid: uuidSequencial(),
       now: () => new Date("2026-05-26T12:00:00.000Z"),
@@ -326,7 +342,7 @@ describe("PEVSEngine — Feature 1 (análise)", () => {
     const engine = new PEVSEngine({
       llm,
       sessionAgent,
-      tools: [tool],
+      tools: [tool, toolFiscalMCP()],
       logger: loggerSilencioso,
       maxRetries: 3,
       gerarUuid: uuidSequencial(),
@@ -363,7 +379,7 @@ describe("PEVSEngine — Feature 2 (parecer)", () => {
     const engine = new PEVSEngine({
       llm,
       sessionAgent,
-      tools: [tool],
+      tools: [tool, toolFiscalMCP()],
       logger: loggerSilencioso,
       gerarUuid: uuidSequencial(),
       now: () => new Date("2026-05-26T12:00:00.000Z"),

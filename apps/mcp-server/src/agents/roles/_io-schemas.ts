@@ -130,6 +130,68 @@ export const ResultadoCalculistaSchema = z.object({
 });
 export type ResultadoCalculista = z.infer<typeof ResultadoCalculistaSchema>;
 
+/**
+ * Inputs estruturados que o LLM extrai da petição para alimentar a tool
+ * `calcular_reequilibrio_tributario`.
+ *
+ * O LLM faz inferências razoáveis a partir de:
+ *  - `peticao.contrato.*` (valor, datas, modalidade)
+ *  - `peticao.contratante.ente_federativo` (deriva is_compra_governamental
+ *     + ente_contratante)
+ *  - `peticao.fato_alegado` (contexto da Reforma Tributária)
+ *  - `peticao.calculos_apresentados` (referência se houver)
+ *
+ * Para campos que dependem de fontes externas (alíquotas de referência CBS/IBS
+ * fixadas pelo Senado, redutor anual de compras governamentais), o LLM
+ * preenche `null` e o Calculista marca alertas.
+ *
+ * NÃO repete validações da tool (a tool valida via Zod). Aqui só
+ * estruturamos o que o LLM precisa decidir.
+ */
+export const InputsCalculoReequilibrioLLMSchema = z.object({
+  regime_tributario_pre: z.enum([
+    "lucro_real",
+    "lucro_presumido",
+    "simples_nacional",
+    "imune",
+  ]),
+  aliquotas_pre: z.object({
+    pis_pct: z.number().min(0).max(100),
+    cofins_pct: z.number().min(0).max(100),
+    icms_pct: z.number().min(0).max(100),
+    iss_pct: z.number().min(0).max(100),
+    irpj_csll_pct: z.number().min(0).max(100),
+  }),
+  is_compra_governamental: z.boolean(),
+  ente_contratante: z.enum([
+    "uniao",
+    "estado",
+    "municipio",
+    "df",
+    "autarquia",
+    "fundacao_publica",
+    "nao_se_aplica",
+  ]),
+  /**
+   * Data fim de vigência. Como a Petição só tem data_inicio_vigencia, o
+   * LLM estima com base no objeto contratual ou usa o último dia do ano
+   * seguinte ao início como heurística conservadora.
+   */
+  vigencia_fim: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  aliquotas_referencia_publicadas: z.object({
+    cbs_pct: z.number().min(0).max(100).nullable(),
+    ibs_pct: z.number().min(0).max(100).nullable(),
+  }),
+  redutor_compras_govern_pct: z.number().min(0).max(100).nullable(),
+  creditos_estimados_pct: z.number().min(0).max(100),
+  justificativa: z
+    .string()
+    .min(20, "justificativa precisa explicar como o LLM chegou nesses inputs"),
+});
+export type InputsCalculoReequilibrioLLM = z.infer<
+  typeof InputsCalculoReequilibrioLLMSchema
+>;
+
 /* ---------- Auditor ---------- */
 
 export const RelatorioAuditorSchema = z.object({
