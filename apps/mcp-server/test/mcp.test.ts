@@ -45,10 +45,10 @@ describe("POST /mcp/v1 — tools/list", () => {
       tools: Array<{ name: string; description: string; inputSchema: unknown }>;
     };
     expect(Array.isArray(result.tools)).toBe(true);
-    expect(result.tools).toHaveLength(13);
+    expect(result.tools).toHaveLength(14);
     const names = result.tools.map((t) => t.name);
-    // Leis primeiro (ordem do array MCP_TOOLS — Track D)
-    expect(names.slice(0, 9)).toEqual([
+    // Leis + fiscal primeiro (ordem do array MCP_TOOLS — Tracks D + fiscal)
+    expect(names.slice(0, 10)).toEqual([
       "buscar_legislacao",
       "consultar_artigo",
       "listar_artigos_por_tema",
@@ -58,9 +58,10 @@ describe("POST /mcp/v1 — tools/list", () => {
       "fs_ler_dispositivo",
       "fs_ler_intervalo",
       "fs_grep",
+      "calcular_reequilibrio_tributario",
     ]);
     // Skills depois (ordem do registry — Track E)
-    expect(names.slice(9).sort()).toEqual([
+    expect(names.slice(10).sort()).toEqual([
       "skill_carregar",
       "skill_identificar_relevantes",
       "skill_listar",
