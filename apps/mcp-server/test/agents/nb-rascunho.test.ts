@@ -24,6 +24,7 @@ describe("NotebookAgent — rascunho round-trip", () => {
       contrato_data_assinatura: null,
       contrato_data_inicio_vigencia: null,
       resumo_pedido: "Pedido de reequilíbrio por reforma tributária.",
+      valor_pretendido_centavos: null,
       base_legal_invocada: [],
       campos_incertos: ["contrato_data_assinatura"],
     } as PeticaoRascunho;

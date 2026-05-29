@@ -34,6 +34,7 @@ const rascunhoValido: PeticaoRascunho = {
   contrato_data_inicio_vigencia: "2024-02-01",
   resumo_pedido:
     "A empresa pede reequilíbrio do contrato de pavimentação em razão da alteração da carga tributária trazida pela Reforma Tributária (LC 214/2025).",
+  valor_pretendido_centavos: null,
   base_legal_invocada: ["Art. 124 da Lei 14.133/2021"],
   campos_incertos: [],
 };
