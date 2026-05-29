@@ -18,7 +18,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   FileText,
-  FilePlus,
   History,
   Home,
   Library,
@@ -47,16 +46,10 @@ const NAV_ITEMS: NavItem[] = [
     description: "Painel principal",
   },
   {
-    href: "/peticoes/nova",
-    label: "Nova petição",
-    icon: <FilePlus className="h-4 w-4" />,
-    description: "Submeter para análise",
-  },
-  {
     href: "/notebooks",
     label: "Conversas",
     icon: <MessageSquare className="h-4 w-4" />,
-    description: "Chat com documento (NotebookLM)",
+    description: "Analisar petição via chat (upload de PDF + agentes)",
   },
   {
     href: "/historico",

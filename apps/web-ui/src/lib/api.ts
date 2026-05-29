@@ -179,45 +179,6 @@ export interface HistoricoPage {
 // ---------------------------------------------------------------------------
 
 /**
- * Faz upload de PDF + metadata para iniciar análise.
- *
- * Backend responde 202 com `id` da análise; UI fica polling em
- * `getPeticaoStatus(id)` até `fase === "done"`.
- */
-export async function uploadPeticao(
-  pdf: File,
-  metadata: PeticaoMetadata,
-  apiKey: string,
-): Promise<PeticaoUploadResponse> {
-  const form = new FormData();
-  form.append("pdf", pdf);
-  form.append("metadata", JSON.stringify(metadata));
-
-  // Multipart: browser preenche Content-Type com boundary automaticamente.
-  // Apenas o header de API key entra manualmente.
-  const res = await fetch(`${BASE}/api/peticoes/upload`, {
-    method: "POST",
-    headers: { "X-Google-API-Key": apiKey },
-    body: form,
-  });
-
-  if (!res.ok) {
-    let detail: { error?: string } | null = null;
-    try {
-      detail = (await res.json()) as { error?: string };
-    } catch {
-      // ignore
-    }
-    throw new ApiError(
-      `${res.status}: ${detail?.error ?? res.statusText}`,
-      res.status,
-    );
-  }
-
-  return (await res.json()) as PeticaoUploadResponse;
-}
-
-/**
  * Lê o status / análise completa de uma petição pelo id.
  */
 export async function getPeticao(id: string): Promise<PeticaoStatusResponse> {

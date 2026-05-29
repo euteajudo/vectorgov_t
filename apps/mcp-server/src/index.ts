@@ -36,7 +36,6 @@ import {
   handleGerarParecer,
   handleGetParecer,
   handlePeticaoStatus,
-  handlePeticaoUpload,
 } from "./api/peticoes.js";
 import { handleListarHistorico } from "./api/historico.js";
 import {
@@ -167,9 +166,6 @@ async function route(
   // -----------------------------------------------------------------------
   // API REST consumida pela web-ui (Track H).
   // -----------------------------------------------------------------------
-  if (request.method === "POST" && url.pathname === "/api/peticoes/upload") {
-    return handlePeticaoUpload(request, env, ctx);
-  }
   // GET /api/peticoes/:id/parecer
   if (
     request.method === "GET" &&
