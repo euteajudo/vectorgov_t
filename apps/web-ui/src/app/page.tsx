@@ -48,13 +48,13 @@ export default function HomePage() {
               </div>
               <CardTitle className="mt-3">Analisar nova petição</CardTitle>
               <CardDescription>
-                Faça upload do PDF e os agentes geram análise técnica com
-                fundamentação verificada.
+                Suba o PDF na conversa e os agentes extraem os dados e geram a
+                análise técnica com fundamentação verificada.
               </CardDescription>
             </CardHeader>
             <CardFooter>
               <Button asChild className="w-full">
-                <Link href="/peticoes/nova">
+                <Link href="/notebooks">
                   Começar análise
                   <ArrowRight className="h-4 w-4" />
                 </Link>
