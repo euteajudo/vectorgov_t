@@ -233,6 +233,14 @@ export const PeticaoRascunhoSchema = z.object({
     .default(null),
   /** Síntese do pedido da empresa — base para o fato_alegado da análise. */
   resumo_pedido: z.string().default(""),
+  /**
+   * Valor PLEITEADO pelo requerente (em centavos), extraído da petição — é o
+   * quanto a empresa PEDE de recomposição, distinto de `contrato_valor_centavos`
+   * (valor total do contrato). `null` quando a petição NÃO quantifica o pedido:
+   * nesse caso a análise cai em DILIGÊNCIA (não instruído — art. 376, IV).
+   * NUNCA inventar — o agente não fabrica um pleito que a petição não traz.
+   */
+  valor_pretendido_centavos: z.number().int().nonnegative().nullable().default(null),
   base_legal_invocada: z.array(z.string()).default([]),
   /** Campos que o LLM não encontrou com confiança (a confirmar pelo usuário). */
   campos_incertos: z.array(z.string()).default([]),

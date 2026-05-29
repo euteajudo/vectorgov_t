@@ -325,6 +325,9 @@ export function buildTools(
           contrato_data_assinatura: z.string().optional(),
           contrato_data_inicio_vigencia: z.string().optional(),
           resumo_pedido: z.string().optional(),
+          // Valor pleiteado: o usuário pode TRANSCREVER o que está na petição
+          // (auxílio de transcrição), nunca fabricar um pleito inexistente.
+          valor_pretendido_centavos: z.number().int().nonnegative().optional(),
         })
         .optional()
         .describe("Campos corrigidos pelo usuário (sobrescrevem o rascunho)"),
@@ -384,6 +387,24 @@ export function buildTools(
         },
         fato_alegado: m.resumo_pedido,
         base_legal_invocada: m.base_legal_invocada ?? [],
+        // Valor pleiteado extraído da petição → vira o cálculo apresentado
+        // pelo requerente, que `classificarMerito` usa como `valor_pleiteado`.
+        // Ausente (null) → calculos_apresentados=[] → veredito DILIGÊNCIA
+        // (pedido não instruído, art. 376, IV). O agente nunca fabrica valor.
+        calculos_apresentados:
+          typeof m.valor_pretendido_centavos === "number" &&
+          m.valor_pretendido_centavos > 0
+            ? [
+                {
+                  descricao:
+                    "Valor pleiteado pelo requerente (extraído da petição)",
+                  valor_pretendido_centavos: m.valor_pretendido_centavos,
+                  metodologia:
+                    "Conforme demonstrativo apresentado na petição",
+                  indices_utilizados: [],
+                },
+              ]
+            : [],
       };
 
       const parsed = PeticaoSchema.safeParse(candidata);

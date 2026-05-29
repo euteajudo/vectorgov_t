@@ -26,7 +26,11 @@ Regras DURAS:
 4. Datas no formato YYYY-MM-DD.
 5. resumo_pedido: escreva uma síntese fiel (3-6 frases) do que a empresa
    pede e por quê (fato superveniente alegado). Será a base da análise.
-6. contratante = órgão público; contratado = empresa requerente.`;
+6. contratante = órgão público; contratado = empresa requerente.
+7. valor_pretendido_centavos: o VALOR que a empresa PEDE de recomposição/
+   reequilíbrio (NÃO confundir com o valor total do contrato). Em centavos.
+   Se a petição NÃO quantifica o pedido, deixe null e inclua
+   "valor_pretendido_centavos" em campos_incertos — NUNCA invente um valor.`;
 
 /**
  * Extrai um rascunho de petição do texto do documento.
