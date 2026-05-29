@@ -35,6 +35,7 @@ export class SessionAgentClient
       | "listarHistorico"
       | "carregarAnalise"
       | "carregarParecer"
+      | "carregarParecerPorAnalise"
       | "registrarConversa"
       | "ultimasConversas"
     >
@@ -111,6 +112,13 @@ export class SessionAgentClient
   async carregarParecer(parecerId: string): Promise<Parecer | null> {
     const data = (await this.get(
       `/parecer?id=${encodeURIComponent(parecerId)}`,
+    )) as Parecer | null;
+    return data;
+  }
+
+  async carregarParecerPorAnalise(analiseId: string): Promise<Parecer | null> {
+    const data = (await this.get(
+      `/parecer-por-analise?analise_id=${encodeURIComponent(analiseId)}`,
     )) as Parecer | null;
     return data;
   }

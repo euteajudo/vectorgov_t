@@ -18,38 +18,14 @@
 import type { Env } from "../env.js";
 import { errorResponse, jsonResponse } from "../lib/responses.js";
 import { validatePeticaoId } from "./validation.js";
-import { type AnaliseReequilibrio } from "@vectorgov-t/schemas";
 import { extractApiKey } from "../lib/api-key.js";
 import { type DecisaoFeature2 } from "../agents/pevs-engine.js";
 import { criarEnginePEVS } from "../agents/run-analise.js";
-
-/**
- * Estado interno persistido em KV por petição.
- *
- * TODO: substituir por D1 quando a tabela `peticoes` existir.
- */
-interface PeticaoRecord {
-  id: string;
-  fase:
-    | "queued"
-    | "PLAN"
-    | "EXECUTE"
-    | "ANALYZE"
-    | "VERIFY"
-    | "SYNTHESIZE"
-    | "done"
-    | "failed";
-  progresso_pct: number;
-  iniciado_em: string;
-  atualizado_em: string;
-  metadata: Record<string, unknown>;
-  analise?: unknown;
-  parecer?: unknown;
-  erro?: string;
-}
+import { getSessionAgentClient } from "../agents/session-loader.js";
 
 /**
  * Gera UUID v4. Usa `crypto.randomUUID()` que existe nativo em Workers.
+ * (Usado apenas pelos mocks do golden-set — ver `gerarAnaliseMock`.)
  */
 function newPeticaoId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -59,30 +35,10 @@ function newPeticaoId(): string {
   return `00000000-0000-4000-8000-${Date.now().toString(16).padStart(12, "0")}`;
 }
 
-const KV_PREFIX = "peticao:";
-const KV_TTL_SECONDS = 24 * 60 * 60; // 24 horas
-
-async function writeRecord(env: Env, record: PeticaoRecord): Promise<void> {
-  await env.CACHE.put(`${KV_PREFIX}${record.id}`, JSON.stringify(record), {
-    expirationTtl: KV_TTL_SECONDS,
-  });
-}
-
-async function readRecord(env: Env, id: string): Promise<PeticaoRecord | null> {
-  const raw = await env.CACHE.get(`${KV_PREFIX}${id}`);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as PeticaoRecord;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Mock de análise completa — devolve algo que valida contra `AnaliseReequilibrioSchema`.
- *
- * TODO: substituir pela invocação real do `PEVSEngine.executarFeature1(...)`
- * quando os agentes estiverem plugados no Worker.
+ * Mantido só para o golden-set de testes (`__internal`), atrás do flag
+ * `ENABLE_GOLDEN_SET_MOCKS`. NÃO é usado no fluxo real (chat → PEVS → DO).
  */
 function contratoNumero(metadata: Record<string, unknown>): string {
   const raw = metadata.contrato_numero ?? metadata.contrato ?? "";
@@ -521,7 +477,9 @@ function gerarParecerMock(analiseId: string): unknown {
 }
 
 /**
- * Handler de `GET /api/peticoes/:id`.
+ * Handler de `GET /api/peticoes/:id` — `id` é o `analise_id` (chave durável
+ * no SessionAgent). A análise persistida já está concluída (o chat roda
+ * síncrono), então devolvemos sempre `fase: "done"`.
  */
 export async function handlePeticaoStatus(
   request: Request,
@@ -534,27 +492,26 @@ export async function handlePeticaoStatus(
   if (!idCheck.ok) return idCheck.response;
   const id = idCheck.data;
 
-  const record = await readRecord(env, id);
-  if (!record) {
+  const sessionAgent = getSessionAgentClient(env);
+  const res = await sessionAgent.carregarAnalise(id);
+  if (!res) {
     return errorResponse("Petição não encontrada", 404);
   }
-
+  const ts = res.analise.gerado_em;
   return jsonResponse({
-    id: record.id,
-    fase: record.fase,
-    progresso_pct: record.progresso_pct,
-    iniciado_em: record.iniciado_em,
-    atualizado_em: record.atualizado_em,
-    analise: record.analise,
-    erro: record.erro,
+    id,
+    fase: "done",
+    progresso_pct: 100,
+    iniciado_em: ts,
+    atualizado_em: ts,
+    analise: res.analise,
   });
 }
 
 /**
- * Handler de `POST /api/peticoes/:id/parecer`.
- *
- * Gera e persiste o parecer. Em produção, dispararia o agente Redator
- * via PEVS Engine (Feature 2). Aqui devolve mock sincronicamente.
+ * Handler de `POST /api/peticoes/:id/parecer` — gera o parecer formal
+ * (Feature 2) a partir da análise persistida (`analise_id`). O
+ * `executarFeature2` do engine já persiste o parecer no SessionAgent.
  */
 export async function handleGerarParecer(
   request: Request,
@@ -576,18 +533,12 @@ export async function handleGerarParecer(
     );
   }
 
-  const record = await readRecord(env, id);
-  if (!record) {
-    return errorResponse("Petição não encontrada", 404);
+  const sessionAgent = getSessionAgentClient(env);
+  const res = await sessionAgent.carregarAnalise(id);
+  if (!res) {
+    return errorResponse("Análise não encontrada", 404);
   }
-  if (record.fase !== "done" || !record.analise) {
-    return errorResponse(
-      "Análise ainda não está concluída para gerar parecer",
-      409,
-    );
-  }
-
-  const analise = record.analise as AnaliseReequilibrio;
+  const { peticao, analise } = res;
   if (analise.veredito === "inconclusiva") {
     return errorResponse(
       "Não é possível gerar parecer formal a partir de análise inconclusiva. Complemente os pontos pendentes primeiro.",
@@ -612,25 +563,15 @@ export async function handleGerarParecer(
       numero: `PARECER-${id.slice(0, 8)}`,
       parecerista: "vectorgov-t",
       orgao: "(órgão não informado)",
-      assunto: `Reequilíbrio econômico-financeiro — contrato ${
-        typeof record.metadata?.contrato_numero === "string"
-          ? record.metadata.contrato_numero
-          : "(s/n)"
-      }`,
+      assunto: `Reequilíbrio econômico-financeiro — contrato ${peticao.contrato.numero}`,
       data: new Date().toISOString().slice(0, 10),
     },
   };
 
   try {
     const engine = await criarEnginePEVS(env, apiKey);
+    // executarFeature2 persiste o parecer no SessionAgent (DO).
     const { parecer } = await engine.executarFeature2(analise, decisao);
-
-    const updated: PeticaoRecord = {
-      ...record,
-      parecer,
-      atualizado_em: new Date().toISOString(),
-    };
-    await writeRecord(env, updated);
     return jsonResponse(parecer, 201);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -639,7 +580,7 @@ export async function handleGerarParecer(
 }
 
 /**
- * Handler de `GET /api/peticoes/:id/parecer`.
+ * Handler de `GET /api/peticoes/:id/parecer` — busca o parecer pela análise.
  */
 export async function handleGetParecer(
   request: Request,
@@ -652,15 +593,12 @@ export async function handleGetParecer(
   if (!idCheck.ok) return idCheck.response;
   const id = idCheck.data;
 
-  const record = await readRecord(env, id);
-  if (!record) {
-    return errorResponse("Petição não encontrada", 404);
-  }
-  if (!record.parecer) {
+  const sessionAgent = getSessionAgentClient(env);
+  const parecer = await sessionAgent.carregarParecerPorAnalise(id);
+  if (!parecer) {
     return errorResponse("Parecer ainda não gerado", 404);
   }
-
-  return jsonResponse(record.parecer);
+  return jsonResponse(parecer);
 }
 
 export const __internal = { gerarAnaliseMock };
