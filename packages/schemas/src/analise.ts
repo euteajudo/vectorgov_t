@@ -31,6 +31,7 @@ export const VereditoSchema = z.enum([
   "procedente",
   "parcialmente_procedente",
   "improcedente",
+  "diligencia",
   "inconclusiva",
 ]);
 
@@ -137,6 +138,15 @@ export const AnaliseReequilibrioSchema = z
       message:
         "Veredito procedente/parcialmente_procedente exige ao menos 1 cálculo bem-sucedido",
       path: ["calculos"],
+    },
+  )
+  .refine(
+    (a) =>
+      a.veredito !== "diligencia" || a.pontos_a_complementar.length >= 1,
+    {
+      message:
+        "Veredito 'diligencia' exige ao menos 1 ponto_a_complementar (o que deve ser complementado)",
+      path: ["pontos_a_complementar"],
     },
   );
 

@@ -5,9 +5,9 @@
  *   - Skills (4 tools)              — Track E, via boot do skills/index.js
  *   - Leis semânticas (4 tools)     — Track D, via array MCP_TOOLS
  *   - Leis filesystem (5 tools)     — Track D, via array MCP_TOOLS
- *   - Fiscal (1 tool)               — engine determinística reequilíbrio
+ *   - Fiscal (2 tools)              — engine de cálculo + regra de mérito
  *
- * Total: 14 tools expostas em `tools/list`.
+ * Total: 15 tools expostas em `tools/list`.
  *
  * Convenção de adição de tool nova:
  *   1. Criar `src/mcp/tools/<grupo>/<slug>.ts`.
@@ -35,10 +35,13 @@ import { fsLerIntervaloTool } from "./filesystem/fs-ler-intervalo.js";
 import { fsGrepTool } from "./filesystem/fs-grep.js";
 
 // Fiscal — engine determinística pós-Reforma Tributária
-import { calcularReequilibrioTool } from "./fiscal/index.js";
+import {
+  calcularReequilibrioTool,
+  classificarMeritoTool,
+} from "./fiscal/index.js";
 
 /**
- * Array das 10 tools de leis/fiscais na ordem canônica.
+ * Array das 11 tools de leis/fiscais na ordem canônica.
  * As 4 tools de skills NÃO aparecem aqui — são registradas via `registry.ts`
  * pelo boot do `./skills/index.js`.
  */
@@ -53,6 +56,7 @@ export const MCP_TOOLS: ToolDescriptor[] = [
   fsLerIntervaloTool,
   fsGrepTool,
   calcularReequilibrioTool,
+  classificarMeritoTool,
 ];
 
 const BY_NAME: Map<string, ToolDescriptor> = new Map(

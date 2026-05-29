@@ -122,6 +122,26 @@ export const AnaliseJuridicaSchema = z.object({
   interpretacao: z.string().min(50),
   riscos_juridicos: z.array(z.string().min(1)).default([]),
   citacoes_aplicaveis: z.array(z.string()).default([]),
+  /**
+   * Juízo de ADMISSIBILIDADE do pedido — é JUÍZO do LLM sobre a prosa da
+   * petição (inevitável: "está comprovado?" não é determinístico), mas o
+   * OUTPUT vira flags booleanas + justificativa, para que a regra
+   * determinística do mérito (`classificarMerito`) o consuma SEM
+   * reinterpretar texto. Assim "dado isso, qual o veredito?" fica
+   * determinístico, ainda que o input ("é admissível?") seja juízo.
+   */
+  admissibilidade: z.object({
+    /** Pedido está no escopo do reequilíbrio por IBS/CBS (LC 214/2025, art. 373). */
+    no_escopo: z.boolean(),
+    /** Pedido tempestivo (LC 214/2025, art. 376, II). */
+    tempestivo: z.boolean(),
+    /** Petição instruída com os documentos mínimos (LC 214/2025, art. 376, IV). */
+    instruido: z.boolean(),
+    /** Desequilíbrio efetivamente comprovado (LC 214/2025, art. 374 caput + 376, IV). */
+    comprovacao_suficiente: z.boolean(),
+    /** Como o Analista chegou a cada flag (rastreabilidade). */
+    justificativa: z.string().min(20),
+  }),
 });
 export type AnaliseJuridica = z.infer<typeof AnaliseJuridicaSchema>;
 
@@ -139,11 +159,17 @@ export type ParecerLicitacao = z.infer<typeof ParecerLicitacaoSchema>;
 export const SinteseReequilibrioSchema = z.object({
   /** Sumário integrado das descobertas dos especialistas. */
   sintese: z.string().min(50),
-  /** Veredito preliminar (antes do Auditor). */
-  veredito_preliminar: z.enum([
+  /**
+   * Veredito SUGERIDO pelo LLM — ADVISORY, não vinculante. O veredito final
+   * é DETERMINÍSTICO, produzido por `classificarMerito` sobre o número da
+   * tool #10 + as flags de admissibilidade do Analista. Mantido apenas como
+   * sinal/telemetria e para enriquecer a fundamentação textual.
+   */
+  veredito_sugerido: z.enum([
     "procedente",
     "parcialmente_procedente",
     "improcedente",
+    "diligencia",
     "inconclusiva",
   ]),
   /** Pontos a complementar identificados. */

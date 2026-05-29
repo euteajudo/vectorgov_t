@@ -101,6 +101,11 @@ export type Contrato = z.infer<typeof ContratoSchema>;
  *
  * Importante: este é o cálculo que o requerente apresentou, NÃO o cálculo
  * verificado pelo Calculista. O Auditor compara um contra o outro.
+ *
+ * Semântica do array em `Peticao.calculos_apresentados`: os itens são
+ * COMPONENTES do pleito total e são SOMADOS para obter o `valor_pleiteado`
+ * consumido por `classificarMerito`. NÃO são cenários alternativos. (Se um
+ * dia surgir discriminador de cenários, revisar para "maior/principal".)
  */
 export const CalculoApresentadoSchema = z.object({
   descricao: z.string().min(1, "descrição do cálculo apresentado"),

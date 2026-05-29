@@ -119,6 +119,67 @@ describe("tool: consultar_artigo", () => {
     expect(out.encontrado).toBe(true);
     expect(out.texto).toBe("Texto do art 5");
   });
+
+  it("data_referencia: resolve a vigência por competência (WHERE por data)", async () => {
+    // A regra SÓ casa quando o SQL contém a cláusula de vigência-na-data —
+    // prova que `data_referencia` troca o WHERE (de `data_fim IS NULL` para a
+    // janela histórica). Sem a cláusula, não casa → encontrado=false.
+    const env = createTestEnv({
+      DB: createFakeD1({
+        rules: [
+          {
+            match: /v\.data_inicio <= \? AND \(v\.data_fim IS NULL OR v\.data_fim > \?\)/,
+            rows: [
+              {
+                dispositivo_id: "lc-214-2025#art374",
+                norma_id: "lc-214-2025",
+                artigo: 374,
+                paragrafo: null,
+                inciso: null,
+                alinea: null,
+                hierarquia_path: "art374",
+                texto: "Redação vigente em 2026",
+                data_inicio: "2025-01-01",
+                data_fim: "2027-01-01",
+                norma_que_alterou: null,
+                norma_label: "LC 214/2025",
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    const tool = findTool("consultar_artigo")!;
+    const out = (await tool.handler(
+      { norma_id: "lc-214-2025", artigo: 374, data_referencia: "2026-07-01" },
+      env,
+    )) as { encontrado: boolean; texto: string; versao_vigente?: { data_fim: string | null } };
+    expect(out.encontrado).toBe(true);
+    expect(out.texto).toBe("Redação vigente em 2026");
+    expect(out.versao_vigente?.data_fim).toBe("2027-01-01");
+  });
+
+  it("sem data_referencia: NÃO usa a cláusula de data (mantém redação atual)", async () => {
+    // Mesma regra do teste anterior (só casa com a cláusula de data). Sem
+    // `data_referencia`, o SQL usa `data_fim IS NULL` → a regra NÃO casa →
+    // encontrado=false. Garante compatibilidade com o comportamento anterior.
+    const env = createTestEnv({
+      DB: createFakeD1({
+        rules: [
+          {
+            match: /v\.data_inicio <= \?/,
+            rows: [{ dispositivo_id: "x", norma_id: "lc-214-2025", artigo: 374, paragrafo: null, inciso: null, alinea: null, hierarquia_path: "art374", texto: "histórica", data_inicio: "2025-01-01", data_fim: null, norma_que_alterou: null, norma_label: "LC" }],
+          },
+        ],
+      }),
+    });
+    const tool = findTool("consultar_artigo")!;
+    const out = (await tool.handler(
+      { norma_id: "lc-214-2025", artigo: 374 },
+      env,
+    )) as { encontrado: boolean };
+    expect(out.encontrado).toBe(false);
+  });
 });
 
 describe("tool: listar_artigos_por_tema", () => {
