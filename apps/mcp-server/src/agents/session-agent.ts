@@ -55,6 +55,10 @@ import {
   ParecerSchema,
   type Parecer,
 } from "@vectorgov-t/schemas";
+import { PEVSEngine } from "./pevs-engine.js";
+import { GoogleLLMClient } from "./llm/google.js";
+import { getModelConfig } from "../lib/model-config.js";
+import { buildToolsForPEVS } from "./tools-adapter.js";
 
 /**
  * Estado mínimo persistido em storage convencional do DO.
@@ -106,11 +110,16 @@ export interface StorageKV {
  * Estado abstrato do Durable Object (apenas o que usamos).
  *
  * O tipo real do Workers (`DurableObjectState`) tem mais coisa, mas
- * só consumimos `storage.sql` (SQL) e `storage` (KV). Manter a
- * interface enxuta facilita o teste sem Workers runtime.
+ * só consumimos `storage.sql` (SQL), `storage` (KV) e `setAlarm`/`getAlarm`
+ * (para rodar o pipeline PEVS em background sem o limite do `ctx.waitUntil`).
+ * Manter a interface enxuta facilita o teste sem Workers runtime.
  */
 export interface SessionAgentState {
-  storage: StorageKV & { sql: StorageSQL };
+  storage: StorageKV & {
+    sql: StorageSQL;
+    setAlarm?(scheduledTime: number | Date): Promise<void> | void;
+    getAlarm?(): Promise<number | null>;
+  };
 }
 
 /**
@@ -185,6 +194,18 @@ export class SessionAgent {
       this.state.storage.sql.exec(
         `CREATE INDEX IF NOT EXISTS idx_conversas_criado_em
            ON conversas_recentes(criado_em DESC);`,
+      );
+      // Fila de jobs de análise PEVS rodados em background via alarm.
+      // `api_key` é armazenada TRANSIENTEMENTE (apagada ao concluir o job)
+      // porque o alarm roda fora do contexto da request que trouxe a key.
+      this.state.storage.sql.exec(
+        `CREATE TABLE IF NOT EXISTS analise_jobs (
+           record_id TEXT PRIMARY KEY,
+           peticao_json TEXT NOT NULL,
+           api_key TEXT NOT NULL,
+           status TEXT NOT NULL DEFAULT 'pendente',
+           criado_em INTEGER NOT NULL
+         );`,
       );
       await this.state.storage.put(STORAGE_FLAG_SCHEMA, true);
     })();
@@ -399,6 +420,143 @@ export class SessionAgent {
     return this.env;
   }
 
+  // ==========================================================================
+  // Background PEVS via alarm — escapa o limite do `ctx.waitUntil` do Worker.
+  // ==========================================================================
+
+  /**
+   * Enfileira um job de análise PEVS e agenda o alarm pra rodá-lo
+   * imediatamente. Retorna assim que persiste o job (não espera o pipeline).
+   *
+   * A `apiKey` é gravada na linha do job — é apagada quando o job termina
+   * (ver `processarJob`). Transiente por design.
+   */
+  async agendarAnalise(
+    recordId: string,
+    peticao: Peticao,
+    apiKey: string,
+  ): Promise<void> {
+    await this.garantirSchema();
+    this.state.storage.sql.exec(
+      `INSERT OR REPLACE INTO analise_jobs
+         (record_id, peticao_json, api_key, status, criado_em)
+       VALUES (?, ?, ?, 'pendente', ?)`,
+      recordId,
+      JSON.stringify(peticao),
+      apiKey,
+      Date.now(),
+    );
+    // Dispara o alarm pra agora. Se já houver um agendado, não sobrescreve
+    // o passado (setAlarm com horário <= agora roda assim que possível).
+    if (this.state.storage.setAlarm) {
+      await this.state.storage.setAlarm(Date.now());
+    }
+  }
+
+  /**
+   * Atualiza o registro de status da petição no KV (`peticao:<id>`),
+   * lido pelo polling da UI. Mescla com o registro existente.
+   */
+  private async atualizarRecordKV(
+    recordId: string,
+    patch: Record<string, unknown>,
+  ): Promise<void> {
+    const chave = `peticao:${recordId}`;
+    let atual: Record<string, unknown> = {};
+    const raw = await this.env.CACHE.get(chave);
+    if (raw) {
+      try {
+        atual = JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        atual = {};
+      }
+    }
+    const novo = {
+      ...atual,
+      ...patch,
+      atualizado_em: new Date().toISOString(),
+    };
+    await this.env.CACHE.put(chave, JSON.stringify(novo), {
+      expirationTtl: 24 * 60 * 60,
+    });
+  }
+
+  /**
+   * Handler de alarm do DO. Processa todos os jobs pendentes em sequência.
+   * Erros de um job não bloqueiam os demais. Cloudflare re-dispara o alarm
+   * automaticamente se este handler lançar — por isso capturamos por job.
+   */
+  async alarm(): Promise<void> {
+    await this.garantirSchema();
+    const pendentes = this.state.storage.sql
+      .exec(
+        `SELECT record_id, peticao_json, api_key
+           FROM analise_jobs WHERE status = 'pendente'
+           ORDER BY criado_em ASC`,
+      )
+      .toArray();
+
+    for (const row of pendentes) {
+      const recordId = String(row["record_id"]);
+      const apiKey = String(row["api_key"]);
+      // Marca em processamento antes de rodar (evita reprocesso se o alarm
+      // re-disparar enquanto este job ainda corre).
+      this.state.storage.sql.exec(
+        `UPDATE analise_jobs SET status = 'processando' WHERE record_id = ?`,
+        recordId,
+      );
+      try {
+        const peticao = PeticaoSchema.parse(
+          JSON.parse(String(row["peticao_json"])),
+        );
+        await this.processarJob(recordId, peticao, apiKey);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await this.atualizarRecordKV(recordId, { fase: "failed", erro: msg });
+      } finally {
+        // Apaga o job (e a apiKey) — terminal, sucesso ou falha.
+        this.state.storage.sql.exec(
+          `DELETE FROM analise_jobs WHERE record_id = ?`,
+          recordId,
+        );
+      }
+    }
+  }
+
+  /**
+   * Roda o PEVS Feature 1 pra um job. Atualiza o KV a cada fase.
+   * Como roda DENTRO do DO, `this` é o próprio SessionAgent — o engine
+   * persiste a análise via `analisarPeticao` sem hop de rede.
+   */
+  private async processarJob(
+    recordId: string,
+    peticao: Peticao,
+    apiKey: string,
+  ): Promise<void> {
+    const llm = new GoogleLLMClient(apiKey);
+    const cfg = await getModelConfig(this.env);
+    const tools = buildToolsForPEVS(this.env);
+    const engine = new PEVSEngine({
+      llm,
+      sessionAgent: this,
+      tools,
+      modelos: cfg.modelos,
+      onFase: async (fase, pct, extra) => {
+        await this.atualizarRecordKV(recordId, {
+          fase,
+          progresso_pct: pct,
+          ...(extra && typeof extra === "object" ? extra : {}),
+        });
+      },
+    });
+    const { analise } = await engine.executarFeature1(peticao);
+    await this.atualizarRecordKV(recordId, {
+      fase: "done",
+      progresso_pct: 100,
+      analise,
+    });
+  }
+
   /**
    * Handler HTTP do DO. Roteamento interno usado pelo `session-loader`
    * (cliente do Worker pro DO).
@@ -415,6 +573,15 @@ export class SessionAgent {
     const url = new URL(request.url);
     const pathname = url.pathname;
     try {
+      if (request.method === "POST" && pathname === "/agendar-analise") {
+        const body = (await request.json()) as {
+          record_id: string;
+          peticao: Peticao;
+          api_key: string;
+        };
+        await this.agendarAnalise(body.record_id, body.peticao, body.api_key);
+        return Response.json({ ok: true, agendado: true });
+      }
       if (request.method === "POST" && pathname === "/analisar-peticao") {
         const body = (await request.json()) as {
           peticao: Peticao;

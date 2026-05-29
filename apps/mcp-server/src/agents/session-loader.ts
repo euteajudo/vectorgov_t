@@ -72,6 +72,22 @@ export class SessionAgentClient
     await this.post("/analisar-peticao", { peticao, analise });
   }
 
+  /**
+   * Enfileira um job de análise PEVS no DO (rodado em background via alarm).
+   * Retorna assim que o job é persistido — não espera o pipeline.
+   */
+  async agendarAnalise(
+    recordId: string,
+    peticao: Peticao,
+    apiKey: string,
+  ): Promise<void> {
+    await this.post("/agendar-analise", {
+      record_id: recordId,
+      peticao,
+      api_key: apiKey,
+    });
+  }
+
   async gerarParecer(parecer: Parecer): Promise<void> {
     await this.post("/gerar-parecer", { parecer });
   }

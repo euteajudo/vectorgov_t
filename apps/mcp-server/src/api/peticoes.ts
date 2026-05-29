@@ -33,6 +33,7 @@ import {
   rodarAnalisePeticao,
   criarEnginePEVS,
 } from "../agents/run-analise.js";
+import { getSessionAgentClient } from "../agents/session-loader.js";
 
 /**
  * Tamanho máximo de PDF aceito (bytes). Igual ao endpoint de ingestão.
@@ -606,55 +607,20 @@ function montarPeticaoDoForm(
 }
 
 /**
- * Roda o motor PEVS real em background. Atualiza o KV a cada fase via
- * callback `onFase` do engine. Em caso de erro, marca `fase: 'failed'`
- * com mensagem no record.
+ * Enfileira a análise PEVS no SessionAgent Durable Object, que roda o
+ * pipeline em background via alarm. NÃO usa `ctx.waitUntil` para o pipeline
+ * pesado — o DO escapa o limite de tempo do waitUntil (que matava a análise
+ * no VERIFY). O DO atualiza o KV `peticao:<id>` a cada fase; a UI faz polling.
  */
 async function rodarPEVSReal(
   env: Env,
-  ctx: ExecutionContext,
+  _ctx: ExecutionContext,
   record: PeticaoRecord,
   peticao: Peticao,
   apiKey: string,
 ): Promise<void> {
-  ctx.waitUntil(
-    (async () => {
-      let curr = record;
-      try {
-        const { analise } = await rodarAnalisePeticao(env, peticao, apiKey, {
-          onFase: async (fase, pct, extra) => {
-            curr = {
-              ...curr,
-              fase: fase === "done" ? "done" : fase,
-              progresso_pct: pct,
-              atualizado_em: new Date().toISOString(),
-              ...(extra && typeof extra === "object"
-                ? { metadata: { ...curr.metadata, ...extra } }
-                : {}),
-            };
-            await writeRecord(env, curr);
-          },
-        });
-        curr = {
-          ...curr,
-          fase: "done",
-          progresso_pct: 100,
-          atualizado_em: new Date().toISOString(),
-          analise,
-        };
-        await writeRecord(env, curr);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const updated: PeticaoRecord = {
-          ...curr,
-          fase: "failed",
-          atualizado_em: new Date().toISOString(),
-          erro: msg,
-        };
-        await writeRecord(env, updated);
-      }
-    })(),
-  );
+  const sessionAgent = getSessionAgentClient(env);
+  await sessionAgent.agendarAnalise(record.id, peticao, apiKey);
 }
 
 /**
