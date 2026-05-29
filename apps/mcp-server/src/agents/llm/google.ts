@@ -42,7 +42,11 @@ function resolveModelId(modelo: ModeloLLM): string {
     case "gemini-3.5-flash":
       return "gemini-3.5-flash";
     case "gemini-3-pro":
-      return "gemini-3-pro-preview";
+      // `gemini-3-pro-preview` foi descontinuado ("no longer available").
+      // O Pro corrente é `gemini-3.1-pro-preview` (validado contra a
+      // models.list da API em 2026-05). Mantemos o nome lógico
+      // `gemini-3-pro` no código pra não quebrar config persistida no KV.
+      return "gemini-3.1-pro-preview";
   }
 }
 
