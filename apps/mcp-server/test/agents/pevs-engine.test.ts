@@ -87,6 +87,14 @@ function novaPeticao(): Peticao {
     fato_alegado:
       "Aumento extraordinário de preços de asfalto em mais de 40% entre dezembro/2024 e março/2025, comprovado por notas fiscais anexas.",
     base_legal_invocada: ["Art. 124 da Lei 14.133/2021"],
+    calculos_apresentados: [
+      {
+        descricao: "Diferencial de carga tributária pleiteado",
+        valor_pretendido_centavos: 50_000_00,
+        metodologia: "Diferença entre carga pré e pós Reforma sobre o saldo remanescente",
+        indices_utilizados: [],
+      },
+    ],
   });
 }
 
@@ -181,6 +189,14 @@ function criarRespostasPadrao() {
         "A elevação extraordinária de preços do asfalto, devidamente comprovada por notas fiscais e índices oficiais, caracteriza a álea econômica extraordinária do art. 124 da Lei 14.133/2021.",
       riscos_juridicos: ["Verificar tempestividade do pleito"],
       citacoes_aplicaveis: ["Art. 124 da Lei 14.133/2021"],
+      admissibilidade: {
+        no_escopo: true,
+        tempestivo: true,
+        instruido: true,
+        comprovacao_suficiente: true,
+        justificativa:
+          "Pedido no escopo do reequilíbrio, tempestivo, instruído com notas fiscais e índices; desequilíbrio comprovado.",
+      },
     }),
     "esp_licitacoes.enquadrar": () => ({
       enquadramento_lei_14133:
@@ -212,7 +228,7 @@ function criarRespostasPadrao() {
     "esp_reequilibrio.integrar": () => ({
       sintese:
         "Integrando a análise tributária e o enquadramento na Lei 14.133, o caso apresenta fundamento para reequilíbrio econômico-financeiro, suportado pelos cálculos do Calculista que indicam variação real superior à álea ordinária.",
-      veredito_preliminar: "procedente",
+      veredito_sugerido: "procedente",
       pontos_a_complementar: [],
     }),
     "auditor.relatorio": () => ({
@@ -267,7 +283,7 @@ const loggerSilencioso: AgentLogger = {
 };
 
 describe("PEVSEngine — Feature 1 (análise)", () => {
-  it("caminho feliz: produz análise procedente sem retry", async () => {
+  it("caminho feliz: produz veredito determinístico (improcedente — carga reduzida no piloto 2026) sem retry", async () => {
     const state = createInMemoryState();
     const sessionAgent = new SessionAgent(state, createTestEnv());
     const llm = criarMockLLM(criarRespostasPadrao());
@@ -284,14 +300,18 @@ describe("PEVSEngine — Feature 1 (análise)", () => {
       novaPeticao(),
     );
     expect(retries_executados).toBe(0);
-    expect(analise.veredito).toBe("procedente");
+    // Em 2026 (regime piloto) a compensação PIS/Cofins zera a carga pós; como
+    // a carga pré é maior, o diferencial é NEGATIVO → regra determinística
+    // retorna improcedente (carga reduzida, art. 375), independentemente do
+    // veredito_sugerido "procedente" do LLM.
+    expect(analise.veredito).toBe("improcedente");
     expect(analise.citacoes).toHaveLength(1);
     expect(analise.citacoes[0]!.status).toBe("APROVADA");
     expect(analise.score_confianca).toBeGreaterThan(0.5);
     // Persistido
     const hist = await sessionAgent.listarHistorico();
     expect(hist).toHaveLength(1);
-    expect(hist[0]!.veredito).toBe("procedente");
+    expect(hist[0]!.veredito).toBe("improcedente");
   });
 
   it("retry: Auditor reprova na 1ª passada, aprova na 2ª", async () => {
@@ -322,7 +342,9 @@ describe("PEVSEngine — Feature 1 (análise)", () => {
       novaPeticao(),
     );
     expect(retries_executados).toBe(1);
-    expect(analise.veredito).toBe("procedente");
+    // Veredito determinístico igual ao caminho feliz (improcedente — carga
+    // reduzida no piloto 2026). O foco deste teste é a mecânica de retry.
+    expect(analise.veredito).toBe("improcedente");
     expect(analise.citacoes[0]!.status).toBe("APROVADA");
     expect(chamadasBuscar).toBe(2);
   });

@@ -43,7 +43,9 @@ import type {
   ResultadoPesquisa,
   RelatorioAuditor,
   TipoDocumentoRedator,
+  AnaliseJuridica,
 } from "./roles/index.js";
+import { classificarMerito } from "../mcp/tools/fiscal/index.js";
 import {
   AnaliseReequilibrioSchema,
   type AnaliseReequilibrio,
@@ -304,6 +306,17 @@ export class PEVSEngine {
     const perguntaFocal = `Reequilíbrio do contrato ${peticao.contrato.numero}: ${peticao.fato_alegado.slice(0, 200)}`;
     const contextoPeticao = `Contrato ${peticao.contrato.numero} (${peticao.contrato.modalidade}); contratante: ${peticao.contratante.razao_social}; contratado: ${peticao.contratado.razao_social}; base legal invocada: ${peticao.base_legal_invocada.join("; ") || "(vazia)"}.`;
 
+    // Competência para resolver a vigência das normas (lookup exato do
+    // Pesquisador): data representativa do período de EXECUÇÃO em análise.
+    // Heurística (espelha o `inicioRemanescente` do cálculo): o maior entre o
+    // início da vigência e hoje — a redação aplicável às prestações ainda por
+    // executar. Refinamento futuro: resolver por ano, como faz a tool #10.
+    const hojeISO = this.cfg.now().toISOString().slice(0, 10);
+    const competencia =
+      peticao.contrato.data_inicio_vigencia > hojeISO
+        ? peticao.contrato.data_inicio_vigencia
+        : hojeISO;
+
     let resultadoPesquisa: ResultadoPesquisa | undefined;
     let relatorioAuditor: RelatorioAuditor | undefined;
     let retries = 0;
@@ -320,6 +333,7 @@ export class PEVSEngine {
           {
             pergunta_focal: perguntaComFeedback,
             contexto_peticao: contextoPeticao,
+            competencia,
           },
           contexto,
         ),
@@ -339,7 +353,11 @@ export class PEVSEngine {
       const espLicit = criarEspLicitacoes();
       const [analiseTrib, parecerLicit] = await Promise.all([
         analista.executar(
-          { pergunta_focal: perguntaComFeedback, resultado_pesquisa: pesquisaP },
+          {
+            pergunta_focal: perguntaComFeedback,
+            resultado_pesquisa: pesquisaP,
+            peticao,
+          },
           contexto,
         ),
         espLicit.executar(
@@ -390,6 +408,8 @@ export class PEVSEngine {
           sintese,
           calculosP,
           relatorioAuditor,
+          analiseTrib,
+          tracingId,
         );
         const uso_llm = tracker.snapshot();
         const duracao_ms = this.cfg.now().getTime() - inicio.getTime();
@@ -510,31 +530,119 @@ export class PEVSEngine {
   /**
    * Monta a `AnaliseReequilibrio` final juntando o que cada papel produziu.
    *
-   * Faz isso programaticamente (não via LLM) — o LLM já produziu cada
-   * peça, aqui é apenas montagem determinística + Zod parse para
-   * garantir invariantes.
+   * Faz isso programaticamente (não via LLM) — o LLM já produziu cada peça.
+   * O VEREDITO é DETERMINÍSTICO: vem de `classificarMerito` (regra pura sobre
+   * o número da engine + as flags de admissibilidade do Analista). O
+   * `veredito_sugerido` do Esp. Reequilíbrio é apenas advisory. Esta etapa
+   * roda DEPOIS do gate de `inconclusiva` (Auditor reprovou citações), então
+   * aqui a análise já está tecnicamente fundamentada.
    */
   private montarAnalise(
     peticao: Peticao,
     sintese: ReturnType<typeof criarEspReequilibrio>["schemaOutput"]["_output"],
     calculos: ReturnType<typeof criarCalculista>["schemaOutput"]["_output"],
     relatorio: RelatorioAuditor,
+    analiseTrib: AnaliseJuridica,
+    tracingId: string,
   ): AnaliseReequilibrio {
-    // Adapta o veredito preliminar para o final — pode degradar para
-    // `parcialmente_procedente` se score baixo, ou manter.
-    let veredito = sintese.veredito_preliminar;
-    if (relatorio.score_confianca < 0.7 && veredito === "procedente") {
-      veredito = "parcialmente_procedente";
+    // Cálculo de reequilíbrio bem-sucedido (delta vem daqui).
+    const calc = calculos.calculos.find(
+      (c) => c.sucesso && c.valor_final !== null,
+    );
+
+    // Sem cálculo válido não há delta para classificar o mérito → diligência
+    // (cabe ao órgão complementar os inputs da engine, ex.: alíquotas de
+    // referência). Mantém o sistema determinístico mesmo no caminho de falha.
+    if (!calc) {
+      const pontos = [
+        {
+          descricao:
+            "Cálculo determinístico do reequilíbrio não pôde ser concluído (inputs insuficientes para a engine). Complementar dados antes de decidir o mérito.",
+          severidade: "alta" as const,
+          responsavel: "orgao" as const,
+        },
+        ...sintese.pontos_a_complementar,
+      ];
+      return AnaliseReequilibrioSchema.parse({
+        id: this.cfg.gerarUuid(),
+        peticao_id: peticao.id ?? this.cfg.gerarUuid(),
+        veredito: "diligencia",
+        fundamentacao: this.montarFundamentacao(
+          sintese,
+          relatorio,
+          "Diligência: cálculo do diferencial de carga não concluído pela engine determinística.",
+        ),
+        citacoes: relatorio.citacoes_verificadas,
+        calculos: calculos.calculos,
+        score_confianca: relatorio.score_confianca,
+        pontos_a_complementar: pontos,
+        gerado_em: this.cfg.now().toISOString(),
+        modelo_auditor: "gemini-3-pro",
+      });
     }
+
+    // Valor pleiteado: SOMA dos cálculos apresentados pelo requerente (tratados
+    // como componentes do pleito total). `null` quando a petição não quantifica
+    // — a regra trata isso como falta de instrução (art. 376, IV).
+    const valorPleiteado =
+      peticao.calculos_apresentados.length > 0
+        ? peticao.calculos_apresentados.reduce(
+            (soma, c) => soma + c.valor_pretendido_centavos,
+            0,
+          )
+        : null;
+
+    const deltaPp =
+      typeof calc.inputs.diferencial_pct === "number"
+        ? calc.inputs.diferencial_pct
+        : 0;
+
+    // VEREDITO DETERMINÍSTICO — regra pura sobre número + admissibilidade.
+    const merito = classificarMerito({
+      delta_valor_centavos: calc.valor_final ?? 0,
+      delta_percentual_pp: deltaPp,
+      valor_pleiteado_centavos: valorPleiteado,
+      admissibilidade: {
+        no_escopo: analiseTrib.admissibilidade.no_escopo,
+        tempestivo: analiseTrib.admissibilidade.tempestivo,
+        instruido: analiseTrib.admissibilidade.instruido,
+      },
+      comprovacao_suficiente: analiseTrib.admissibilidade.comprovacao_suficiente,
+    });
+
+    this.logFase("MERITO", tracingId, {
+      veredito: merito.veredito,
+      motivo: merito.motivo,
+      valor_reconhecido_centavos: merito.valor_reconhecido_centavos,
+      veredito_sugerido_llm: sintese.veredito_sugerido,
+    });
+
+    // `diligencia` exige >=1 ponto_a_complementar (invariante do schema):
+    // garante um ponto derivado do motivo quando o LLM não trouxe nenhum.
+    let pontos = sintese.pontos_a_complementar;
+    if (merito.veredito === "diligencia" && pontos.length === 0) {
+      pontos = [
+        {
+          descricao: merito.fundamento,
+          severidade: "alta",
+          responsavel: "requerente",
+        },
+      ];
+    }
+
     return AnaliseReequilibrioSchema.parse({
       id: this.cfg.gerarUuid(),
       peticao_id: peticao.id ?? this.cfg.gerarUuid(),
-      veredito,
-      fundamentacao: this.montarFundamentacao(sintese, relatorio),
+      veredito: merito.veredito,
+      fundamentacao: this.montarFundamentacao(
+        sintese,
+        relatorio,
+        `Veredito (regra determinística): ${merito.veredito} — ${merito.fundamento} Valor reconhecido: R$ ${(merito.valor_reconhecido_centavos / 100).toFixed(2)}.${merito.revisao_de_oficio ? " Recomenda-se revisão de ofício para redução (art. 375)." : ""}`,
+      ),
       citacoes: relatorio.citacoes_verificadas,
       calculos: calculos.calculos,
       score_confianca: relatorio.score_confianca,
-      pontos_a_complementar: sintese.pontos_a_complementar,
+      pontos_a_complementar: pontos,
       gerado_em: this.cfg.now().toISOString(),
       modelo_auditor: "gemini-3-pro",
     });
@@ -576,15 +684,18 @@ export class PEVSEngine {
   private montarFundamentacao(
     sintese: { sintese: string },
     relatorio: RelatorioAuditor,
+    conclusaoMerito?: string,
   ): string {
     const base = sintese.sintese;
+    const merito = conclusaoMerito ? `\n\n${conclusaoMerito}` : "";
     const obs = relatorio.observacoes
       ? `\n\nObservações do Auditor: ${relatorio.observacoes}`
       : "";
+    const corpo = `${base}${merito}${obs}`;
     const padded =
-      base.length >= 200
-        ? `${base}${obs}`
-        : `${base}${obs}\n\n${"_".repeat(Math.max(0, 200 - base.length - obs.length))}`;
+      corpo.length >= 200
+        ? corpo
+        : `${corpo}\n\n${"_".repeat(Math.max(0, 200 - corpo.length))}`;
     return padded;
   }
 }

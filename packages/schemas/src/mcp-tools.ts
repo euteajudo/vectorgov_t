@@ -87,6 +87,16 @@ export const ConsultarArtigoInput = z.object({
   paragrafo: ParagrafoRefSchema.optional(),
   inciso: z.string().optional(),
   alinea: z.string().optional(),
+  /**
+   * Data de referência (YYYY-MM-DD) para resolver a VIGÊNCIA por competência.
+   * Quando informada, devolve a redação em vigor NAQUELA data (norma é alvo
+   * móvel — LC 214 já alterada pela LC 227/2026); quando omitida, devolve a
+   * redação vigente ATUAL (compatibilidade com o comportamento anterior).
+   */
+  data_referencia: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "data_referencia deve ser YYYY-MM-DD")
+    .optional(),
 });
 export type ConsultarArtigoInputT = z.infer<typeof ConsultarArtigoInput>;
 
@@ -446,11 +456,86 @@ export type CalcularReequilibrioOutputT = z.infer<
 >;
 
 // ============================================================================
+// classificar_merito — regra DETERMINÍSTICA do veredito ("LLM propõe, regra decide")
+// ============================================================================
+
+export const VereditoMeritoSchema = z.enum([
+  "procedente",
+  "parcialmente_procedente",
+  "improcedente",
+  "diligencia",
+]);
+export type VereditoMerito = z.infer<typeof VereditoMeritoSchema>;
+
+export const MotivoMeritoSchema = z.enum([
+  "fora_de_escopo",
+  "intempestivo",
+  "comprovacao_insuficiente",
+  "carga_reduzida",
+  "sem_desequilibrio",
+  "imaterial",
+  "pleito_integral",
+  "pleito_excede_delta",
+]);
+export type MotivoMerito = z.infer<typeof MotivoMeritoSchema>;
+
+export const ClassificarMeritoInput = z.object({
+  /**
+   * Diferencial de carga em VALOR, em CENTAVOS. Vem da tool #10
+   * (`diferencial.valor_remanescente_contrato_centavos`). Pode ser NEGATIVO
+   * (Reforma reduziu a carga → reequilíbrio em favor da Administração).
+   */
+  delta_valor_centavos: z.number().int(),
+  /**
+   * Diferencial de carga em PONTOS PERCENTUAIS (NÃO é fração!). Vem da tool
+   * #10 (`diferencial.pct_medio_ponderado`). Ex.: 2.5 = 2,5 p.p.
+   */
+  delta_percentual_pp: z.number(),
+  /**
+   * Valor pleiteado pelo requerente, em CENTAVOS. `null` quando a petição NÃO
+   * quantificou o pedido — tratado como falta de instrução (art. 376, IV),
+   * não como zero.
+   */
+  valor_pleiteado_centavos: z.number().int().nonnegative().nullable(),
+  /** Flags de admissibilidade (juízo do Analista, já estruturado em booleanos). */
+  admissibilidade: z.object({
+    no_escopo: z.boolean(), // art. 373
+    tempestivo: z.boolean(), // art. 376, II
+    instruido: z.boolean(), // art. 376, IV
+  }),
+  /** Desequilíbrio efetivamente comprovado (art. 374 caput + 376, IV). */
+  comprovacao_suficiente: z.boolean(),
+  /**
+   * Limiar de materialidade em PONTOS PERCENTUAIS (metodologia do órgão,
+   * art. 376, §3º — parametrizável). Default 0.5 p.p. ATENÇÃO: é p.p., NÃO
+   * fração — 0,5% aqui é `0.5`, não `0.005`.
+   */
+  limiar_materialidade_pp: z.number().min(0).default(0.5),
+});
+export type ClassificarMeritoInputT = z.infer<typeof ClassificarMeritoInput>;
+
+export const ClassificarMeritoOutput = z.object({
+  veredito: VereditoMeritoSchema,
+  /** Valor reconhecido, em CENTAVOS. 0 quando improcedente/diligencia. */
+  valor_reconhecido_centavos: z.number().int().nonnegative(),
+  motivo: MotivoMeritoSchema,
+  /**
+   * True quando a Administração deve rever DE OFÍCIO para REDUZIR a
+   * remuneração (art. 375 — carga tributária caiu). Só ocorre em
+   * `carga_reduzida`.
+   */
+  revisao_de_oficio: z.boolean(),
+  /** Regra aplicada + dispositivo legal, para rastreabilidade. */
+  fundamento: z.string().min(1),
+});
+export type ClassificarMeritoOutputT = z.infer<typeof ClassificarMeritoOutput>;
+
+// ============================================================================
 // Catálogo agregado — útil para o handler MCP montar `tools/list`
 // ============================================================================
 
 /**
- * Lista de nomes das 10 tools registradas (snake_case conforme convenção MCP).
+ * Lista de nomes das 11 tools registradas (snake_case conforme convenção MCP).
  * Em sync com o registry em `apps/mcp-server/src/mcp/tools/registry.ts`.
  */
 export const MCP_TOOL_NAMES = [
@@ -464,5 +549,6 @@ export const MCP_TOOL_NAMES = [
   "fs_ler_intervalo",
   "fs_grep",
   "calcular_reequilibrio_tributario",
+  "classificar_merito",
 ] as const;
 export type McpToolName = (typeof MCP_TOOL_NAMES)[number];

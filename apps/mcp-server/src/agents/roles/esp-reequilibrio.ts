@@ -27,14 +27,21 @@ export interface EspReequilibrioInput {
 
 const SYSTEM_BASE = `Você é o ESPECIALISTA EM REEQUILÍBRIO ECONÔMICO-FINANCEIRO.
 Você INTEGRA as visões tributária e de licitações + os cálculos do Calculista
-para emitir um veredito preliminar.
+em uma SÍNTESE textual fundamentada.
+
+IMPORTANTE: o veredito FINAL NÃO é seu — ele é decidido por uma regra
+determinística (classificar_merito) sobre o número calculado + as flags de
+admissibilidade. Você só SUGERE um veredito (veredito_sugerido, advisory) e,
+sobretudo, produz a FUNDAMENTAÇÃO e os pontos a complementar.
 
 Regras DURAS:
-1. NUNCA emita veredito sem cálculos do Calculista bem-sucedidos
-   (a menos que o veredito seja "improcedente" ou "inconclusiva").
-2. Se houver risco jurídico bloqueante → veredito "inconclusiva" + ponto bloqueante.
-3. Se cálculo apresenta valor irrisório (<0.5%) → "improcedente".
-4. sintese deve ter pelo menos 50 chars resumindo a integração das visões.`;
+1. 'sintese' deve ter pelo menos 50 chars integrando as visões tributária,
+   de licitações e o resultado do cálculo.
+2. 'veredito_sugerido' é apenas um palpite informado — NÃO se preocupe em
+   acertar regras de materialidade/prazo; a regra determinística cuida disso.
+3. Se houver risco jurídico bloqueante, registre-o em 'pontos_a_complementar'
+   com severidade "bloqueante".
+4. NÃO invente valores: o número vem do Calculista.`;
 
 export function criarEspReequilibrio(): AgentRole<
   EspReequilibrioInput,
@@ -84,7 +91,7 @@ ${input.resultado_calculista.calculos
         temperatura: 0.2,
       });
       contexto.logger.info("esp_reequilibrio.executar concluído", {
-        veredito_preliminar: result.object.veredito_preliminar,
+        veredito_sugerido: result.object.veredito_sugerido,
         tracingId: contexto.tracingId,
       });
       return result.object;

@@ -33,6 +33,13 @@ import type { Snippet, CitacaoVerificada, TipoFonte } from "@vectorgov-t/schemas
 export interface PesquisadorInput {
   pergunta_focal: string;
   contexto_peticao: string;
+  /**
+   * Data de competência (YYYY-MM-DD) para resolver a vigência das normas no
+   * lookup exato (`consultar_artigo`). Representa o período de execução em
+   * análise — a redação da norma de transição muda por competência. Opcional:
+   * sem ela, o lookup usa a redação ATUAL.
+   */
+  competencia?: string;
 }
 
 const TOOL_BUSCAR = "buscar_legislacao";
@@ -205,6 +212,11 @@ export function criarPesquisador(): AgentRole<
             const resp = (await toolConsultar.executar({
               norma_id: alvo.norma,
               artigo: alvo.artigo,
+              // Resolve a redação por competência (período de execução). Sem
+              // competência, a tool devolve a redação atual.
+              ...(input.competencia
+                ? { data_referencia: input.competencia }
+                : {}),
             })) as
               | { encontrado?: boolean; citacao?: Snippet["citacao"]; texto?: string }
               | undefined;
