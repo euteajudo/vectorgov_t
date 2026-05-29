@@ -198,6 +198,30 @@ describe("SessionAgent — round-trip", () => {
     expect(got!.cabecalho.numero).toBe("PAR-2026-XYZ");
   });
 
+  it("carregarParecerPorAnalise acha o parecer pela FK analise_id", async () => {
+    const state = createInMemoryState();
+    const agent = new SessionAgent(state, createTestEnv());
+    await agent.analisarPeticao(novaPeticao(), novaAnalise());
+    await agent.gerarParecer(novoParecer());
+    // A UI navega por analise_id (não parecer_id) — este é o caminho do
+    // endpoint GET /api/peticoes/:id/parecer após o repoint para o DO.
+    const got = await agent.carregarParecerPorAnalise(UUID_ANA);
+    expect(got).not.toBeNull();
+    expect(got!.id).toBe(UUID_PAR);
+    expect(await agent.carregarParecerPorAnalise(UUID_PET)).toBeNull();
+  });
+
+  it("listarHistorico inclui o resumo da petição (repoint do /api/historico)", async () => {
+    const state = createInMemoryState();
+    const agent = new SessionAgent(state, createTestEnv());
+    await agent.analisarPeticao(novaPeticao(), novaAnalise());
+    const [item] = await agent.listarHistorico();
+    expect(item!.contrato_numero).toBe("010/2024");
+    expect(item!.contratante).toBe("Prefeitura X");
+    expect(item!.contratado).toBe("Empresa Y");
+    expect(item!.data_protocolo).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
   it("carregarAnalise devolve null se id inexistente", async () => {
     const state = createInMemoryState();
     const agent = new SessionAgent(state, createTestEnv());

@@ -81,6 +81,11 @@ export interface EntradaHistorico {
   criado_em: number;
   tem_parecer: boolean;
   parecer_id: string | null;
+  /** Resumo da petição — evita N+1 no endpoint de histórico. */
+  contrato_numero: string;
+  contratante: string;
+  contratado: string;
+  data_protocolo: string;
 }
 
 /**
@@ -304,12 +309,26 @@ export class SessionAgent {
     return rows.map((r) => {
       const peticaoJson = r["peticao_json"];
       let peticaoId = "";
+      let contratoNumero = "—";
+      let contratante = "—";
+      let contratado = "—";
+      let dataProtocolo = "";
       if (typeof peticaoJson === "string") {
         try {
-          const parsed = JSON.parse(peticaoJson) as { id?: string };
-          peticaoId = parsed.id ?? "";
+          const p = JSON.parse(peticaoJson) as {
+            id?: string;
+            contrato?: { numero?: string };
+            contratante?: { razao_social?: string };
+            contratado?: { razao_social?: string };
+            data_protocolo?: string;
+          };
+          peticaoId = p.id ?? "";
+          contratoNumero = p.contrato?.numero ?? "—";
+          contratante = p.contratante?.razao_social ?? "—";
+          contratado = p.contratado?.razao_social ?? "—";
+          dataProtocolo = p.data_protocolo ?? "";
         } catch {
-          peticaoId = "";
+          // mantém defaults
         }
       }
       return {
@@ -320,6 +339,10 @@ export class SessionAgent {
         criado_em: Number(r["criado_em"] ?? 0),
         tem_parecer: r["parecer_id"] !== null && r["parecer_id"] !== undefined,
         parecer_id: r["parecer_id"] ? String(r["parecer_id"]) : null,
+        contrato_numero: contratoNumero,
+        contratante,
+        contratado,
+        data_protocolo: dataProtocolo,
       };
     });
   }
@@ -357,6 +380,23 @@ export class SessionAgent {
       .exec(
         `SELECT parecer_json FROM pareceres_gerados WHERE id = ? LIMIT 1`,
         parecerId,
+      )
+      .toArray();
+    if (rows.length === 0) return null;
+    return ParecerSchema.parse(JSON.parse(String(rows[0]!["parecer_json"])));
+  }
+
+  /**
+   * Recupera o parecer de uma ANÁLISE (pela FK analise_id). Usado pela UI,
+   * que navega por analise_id, não por parecer_id. Devolve o mais recente.
+   */
+  async carregarParecerPorAnalise(analiseId: string): Promise<Parecer | null> {
+    await this.garantirSchema();
+    const rows = this.state.storage.sql
+      .exec(
+        `SELECT parecer_json FROM pareceres_gerados
+         WHERE analise_id = ? ORDER BY criado_em DESC LIMIT 1`,
+        analiseId,
       )
       .toArray();
     if (rows.length === 0) return null;
@@ -617,6 +657,11 @@ export class SessionAgent {
       if (request.method === "GET" && pathname === "/parecer") {
         const id = url.searchParams.get("id") ?? "";
         const res = await this.carregarParecer(id);
+        return Response.json(res ?? null);
+      }
+      if (request.method === "GET" && pathname === "/parecer-por-analise") {
+        const analiseId = url.searchParams.get("analise_id") ?? "";
+        const res = await this.carregarParecerPorAnalise(analiseId);
         return Response.json(res ?? null);
       }
       if (request.method === "GET" && pathname === "/conversas") {
