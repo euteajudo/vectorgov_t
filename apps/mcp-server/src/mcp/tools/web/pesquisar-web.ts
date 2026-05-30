@@ -41,7 +41,9 @@ async function handler(args: unknown, env: Env): Promise<PesquisaWebResultado> {
   }
   const input = parsed.data;
 
-  const key = env.TAVILY_API_KEY;
+  // .trim(): o `wrangler secret put` via pipe pode incluir \n no fim da key,
+  // o que torna o header `Bearer <key>` inválido (Tavily 401).
+  const key = env.TAVILY_API_KEY?.trim();
   if (!key) {
     throw new ToolValidationError(
       "pesquisar_web: TAVILY_API_KEY não configurado no Worker.",
