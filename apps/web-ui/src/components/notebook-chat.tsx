@@ -102,10 +102,121 @@ function ToolCallBlock({ tc }: { tc: ToolCall }): JSX.Element {
   );
 }
 
+/**
+ * Renderiza uma tool call. As tools do "harness" (oferecer_opcoes,
+ * analisar_reequilibrio, gerar_parecer) viram UI rica (chips/cards); as
+ * demais (consulta) ficam no bloco colapsável padrão.
+ */
+function ToolCallView({
+  tc,
+  onAcao,
+}: {
+  tc: ToolCall;
+  onAcao?: (texto: string) => void;
+}): JSX.Element {
+  // Chips de próximas ações (o condutor oferecendo opções).
+  if (tc.nome === "oferecer_opcoes") {
+    const args = tc.args as
+      | { titulo?: string; opcoes?: { rotulo: string; dica?: string }[] }
+      | null;
+    const opcoes = args?.opcoes ?? [];
+    if (opcoes.length === 0) return <ToolCallBlock tc={tc} />;
+    return (
+      <div className="mt-2">
+        {args?.titulo && (
+          <div className="mb-1.5 text-xs text-gray-500">{args.titulo}</div>
+        )}
+        <div className="flex flex-wrap gap-2">
+          {opcoes.map((o, i) => (
+            <button
+              key={i}
+              type="button"
+              title={o.dica}
+              onClick={() => onAcao?.(o.rotulo)}
+              className="rounded-full border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm text-blue-800 hover:bg-blue-100 disabled:opacity-50"
+              disabled={!onAcao}
+            >
+              {o.rotulo}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Card de análise concluída → ver análise / gerar parecer.
+  const res = tc.resultado as Record<string, unknown> | null;
+  if (
+    tc.nome === "analisar_reequilibrio" &&
+    res &&
+    typeof res === "object" &&
+    "peticao_id" in res
+  ) {
+    const peticaoId = String(res["peticao_id"]);
+    const veredito = res["veredito"] ? String(res["veredito"]) : null;
+    return (
+      <div className="mt-2 rounded-md border border-green-200 bg-green-50 p-3 text-sm">
+        <div className="font-medium text-green-900">Análise concluída</div>
+        {veredito && (
+          <div className="text-green-800">
+            Veredito: <strong>{veredito}</strong>
+          </div>
+        )}
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Link
+            href={`/peticoes/${peticaoId}`}
+            className="rounded bg-green-700 px-3 py-1.5 text-white hover:bg-green-800"
+          >
+            Ver análise completa
+          </Link>
+          {veredito !== "inconclusiva" && (
+            <button
+              type="button"
+              onClick={() => onAcao?.("Gerar o parecer formal")}
+              disabled={!onAcao}
+              className="rounded border border-green-700 px-3 py-1.5 text-green-800 hover:bg-green-100 disabled:opacity-50"
+            >
+              Gerar parecer
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Card de parecer gerado → abrir parecer.
+  if (
+    tc.nome === "gerar_parecer" &&
+    res &&
+    typeof res === "object" &&
+    "link" in res
+  ) {
+    const link = String(res["link"]);
+    return (
+      <div className="mt-2 rounded-md border border-indigo-200 bg-indigo-50 p-3 text-sm">
+        <div className="font-medium text-indigo-900">Parecer formal gerado</div>
+        <div className="mt-2">
+          <Link
+            href={link}
+            className="inline-block rounded bg-indigo-700 px-3 py-1.5 text-white hover:bg-indigo-800"
+          >
+            Abrir parecer
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // Default: bloco colapsável (tools de consulta).
+  return <ToolCallBlock tc={tc} />;
+}
+
 function Bubble({
   mensagem,
+  onAcao,
 }: {
   mensagem: Mensagem | { role: "assistant"; content: string; tool_calls: ToolCall[]; criado_em: number };
+  onAcao?: (texto: string) => void;
 }): JSX.Element {
   const isUser = mensagem.role === "user";
   return (
@@ -132,7 +243,7 @@ function Bubble({
         {!isUser && mensagem.tool_calls.length > 0 && (
           <div>
             {mensagem.tool_calls.map((tc) => (
-              <ToolCallBlock key={tc.id} tc={tc} />
+              <ToolCallView key={tc.id} tc={tc} onAcao={onAcao} />
             ))}
           </div>
         )}
@@ -281,32 +392,40 @@ export function NotebookChat({
     }
   }, [notebookId]);
 
+  // Envia uma mensagem (digitada OU vinda de um chip/card clicado).
+  const enviarMensagem = useCallback(
+    (texto: string): void => {
+      const t = texto.trim();
+      if (!t || !socketRef.current) return;
+      if (socketRef.current.readyState() !== WebSocket.OPEN) {
+        setErroConexao("WebSocket não está aberto");
+        return;
+      }
+      if (stream !== null) return; // não envia durante uma geração em curso
+      setErroConexao(null);
+      setHistorico((h) => [
+        ...h,
+        {
+          id: `local-${Date.now()}`,
+          notebook_id: notebookId,
+          role: "user",
+          content: t,
+          tool_calls: [],
+          modelo: null,
+          tokens_total: null,
+          criado_em: Date.now(),
+        },
+      ]);
+      socketRef.current.send({ type: "user_message", text: t });
+      setStream({ texto: "", toolCalls: [] });
+    },
+    [notebookId, stream],
+  );
+
   function handleSubmit(e: FormEvent<HTMLFormElement>): void {
     e.preventDefault();
-    const texto = input.trim();
-    if (!texto || !socketRef.current) return;
-    if (socketRef.current.readyState() !== WebSocket.OPEN) {
-      setErroConexao("WebSocket não está aberto");
-      return;
-    }
-    setErroConexao(null);
-    // Anexa user message ao histórico local imediatamente.
-    setHistorico((h) => [
-      ...h,
-      {
-        id: `local-${Date.now()}`,
-        notebook_id: notebookId,
-        role: "user",
-        content: texto,
-        tool_calls: [],
-        modelo: null,
-        tokens_total: null,
-        criado_em: Date.now(),
-      },
-    ]);
-    socketRef.current.send({ type: "user_message", text: texto });
+    enviarMensagem(input);
     setInput("");
-    setStream({ texto: "", toolCalls: [] });
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>): void {
@@ -369,7 +488,7 @@ export function NotebookChat({
         )}
 
         {historico.map((m) => (
-          <Bubble key={m.id} mensagem={m} />
+          <Bubble key={m.id} mensagem={m} onAcao={enviarMensagem} />
         ))}
 
         {stream && (

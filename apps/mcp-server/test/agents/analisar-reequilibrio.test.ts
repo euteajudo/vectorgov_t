@@ -43,6 +43,8 @@ function nb(rascunho: PeticaoRascunho | null): NotebookAgent {
   return {
     state: { id: { toString: () => "nb" } },
     lerRascunho: async () => rascunho,
+    // FSM: a tool analisar_reequilibrio liga o notebook à análise gerada.
+    salvarAnaliseId: async () => {},
   } as unknown as NotebookAgent;
 }
 

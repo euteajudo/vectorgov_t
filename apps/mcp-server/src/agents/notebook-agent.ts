@@ -41,19 +41,23 @@ import {
   NotebookMetaSchema,
   PeticaoRascunhoSchema,
   type PeticaoRascunho,
+  type EstadoConversa,
 } from "@vectorgov-t/schemas";
 import { embedBatch } from "../lib/batch-embedding.js";
 import { GoogleLLMClient } from "./llm/google.js";
 import { conversar } from "./conversational/engine.js";
+import { derivarEstado } from "./conversational/fsm.js";
+import { getSessionAgentClient } from "./session-loader.js";
 import {
   extractApiKeyFromWS,
   findKeySubprotocol,
 } from "../lib/api-key.js";
 import { getModelConfig } from "../lib/model-config.js";
 
-// v2: adiciona a tabela peticao_rascunho. CREATE IF NOT EXISTS é idempotente,
-// então re-aplicar o schema em notebooks antigos só cria a tabela faltante.
-const STORAGE_FLAG_SCHEMA = "schema_aplicado_v2";
+// v3: adiciona a tabela notebook_analise (link notebook→análise p/ a FSM).
+// CREATE IF NOT EXISTS é idempotente, então re-aplicar o schema em notebooks
+// antigos só cria a tabela faltante.
+const STORAGE_FLAG_SCHEMA = "schema_aplicado_v3";
 
 /**
  * Página de um documento — texto cru extraído pelo Container Python.
@@ -286,6 +290,16 @@ export class NotebookAgent {
            atualizado_em INTEGER NOT NULL
          );`,
       );
+      // Link notebook→análise (1 por notebook). Materializa a transição
+      // PETICAO_EXTRAIDA→ANALISE_PRONTA da FSM da conversa.
+      this.sql.exec(
+        `CREATE TABLE IF NOT EXISTS notebook_analise (
+           notebook_id TEXT PRIMARY KEY,
+           analise_id TEXT NOT NULL,
+           veredito TEXT NOT NULL,
+           atualizado_em INTEGER NOT NULL
+         );`,
+      );
       await this.state.storage.put(STORAGE_FLAG_SCHEMA, true);
     })();
     return this.schemaProntoPromise;
@@ -457,6 +471,70 @@ export class NotebookAgent {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Liga o notebook à análise gerada (fecha a transição da FSM
+   * PETICAO_EXTRAIDA→ANALISE_PRONTA). Sobrescreve a anterior (1 por notebook).
+   */
+  async salvarAnaliseId(analiseId: string, veredito: string): Promise<void> {
+    await this.garantirSchema();
+    const id = this.notebookId();
+    this.sql.exec(
+      `INSERT OR REPLACE INTO notebook_analise
+         (notebook_id, analise_id, veredito, atualizado_em)
+       VALUES (?, ?, ?, ?)`,
+      id,
+      analiseId,
+      veredito,
+      Date.now(),
+    );
+  }
+
+  /** Lê o link notebook→análise, ou null se ainda não houve análise. */
+  async lerAnaliseId(): Promise<{ analise_id: string; veredito: string } | null> {
+    await this.garantirSchema();
+    const id = this.notebookId();
+    const rows = this.sql
+      .exec(
+        `SELECT analise_id, veredito FROM notebook_analise WHERE notebook_id = ? LIMIT 1`,
+        id,
+      )
+      .toArray();
+    if (rows.length === 0) return null;
+    return {
+      analise_id: String(rows[0]!["analise_id"]),
+      veredito: String(rows[0]!["veredito"]),
+    };
+  }
+
+  /**
+   * Deriva a fase atual da conversa a partir do estado real persistido
+   * (documento → rascunho → análise → parecer). É o que alimenta o
+   * micro-harness: o backend dita ao Gemini onde ele está.
+   */
+  async derivarEstadoConversa(): Promise<{
+    estado: EstadoConversa;
+    rascunho: PeticaoRascunho | null;
+    veredito: string | null;
+  }> {
+    const meta = await this.getMeta();
+    const rascunho = await this.lerRascunho();
+    const analise = await this.lerAnaliseId();
+    let temParecer = false;
+    if (analise) {
+      const parecer = await getSessionAgentClient(this.env).carregarParecerPorAnalise(
+        analise.analise_id,
+      );
+      temParecer = !!parecer;
+    }
+    const estado = derivarEstado({
+      temDocumento: !!meta.documento_nome,
+      temRascunho: !!rascunho,
+      analiseId: analise?.analise_id ?? null,
+      temParecer,
+    });
+    return { estado, rascunho, veredito: analise?.veredito ?? null };
   }
 
   /**
@@ -675,6 +753,9 @@ export class NotebookAgent {
     try {
       const llm = new GoogleLLMClient(apiKey);
       const cfg = await getModelConfig(this.env);
+      // Deriva a fase ANTES de chamar o engine: o backend dita ao Gemini
+      // onde ele está e quais tools de transição ele pode ver.
+      const { estado, rascunho, veredito } = await this.derivarEstadoConversa();
       const resultado = await conversar({
         env: this.env,
         llm,
@@ -684,6 +765,9 @@ export class NotebookAgent {
         signal,
         modelo: cfg.modelos.chat_orquestrador,
         apiKey,
+        estado,
+        rascunho,
+        veredito,
       });
       await this.registrarMensagem({
         id: resultado.message_id,
