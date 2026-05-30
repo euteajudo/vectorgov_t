@@ -46,11 +46,13 @@ import type {
   AnaliseJuridica,
 } from "./roles/index.js";
 import { classificarMerito } from "../mcp/tools/fiscal/index.js";
+import { apurarVantajosidade } from "../lib/vantajosidade.js";
 import {
   AnaliseReequilibrioSchema,
   type AnaliseReequilibrio,
   type Peticao,
   type Parecer,
+  type PrecoReferencia,
 } from "@vectorgov-t/schemas";
 
 /**
@@ -403,6 +405,13 @@ export class PEVSEngine {
 
       if (!relatorioAuditor.exige_retry) {
         // Caminho feliz — montar análise final
+        // Opção A: apura vantajosidade (catálogo → preço → docs) e anexa à
+        // análise. Best-effort — null não interrompe o fluxo.
+        const precoRef = await apurarVantajosidade(
+          peticao,
+          contexto.tools,
+          this.cfg.now().toISOString().slice(0, 10),
+        );
         const analise = this.montarAnalise(
           peticao,
           sintese,
@@ -410,6 +419,7 @@ export class PEVSEngine {
           relatorioAuditor,
           analiseTrib,
           tracingId,
+          precoRef,
         );
         const uso_llm = tracker.snapshot();
         const duracao_ms = this.cfg.now().getTime() - inicio.getTime();
@@ -544,6 +554,7 @@ export class PEVSEngine {
     relatorio: RelatorioAuditor,
     analiseTrib: AnaliseJuridica,
     tracingId: string,
+    precoRef: PrecoReferencia | null,
   ): AnaliseReequilibrio {
     // Cálculo de reequilíbrio bem-sucedido (delta vem daqui).
     const calc = calculos.calculos.find(
@@ -578,6 +589,7 @@ export class PEVSEngine {
         pontos_a_complementar: pontos,
         gerado_em: this.cfg.now().toISOString(),
         modelo_auditor: "gemini-3-pro",
+        preco_referencia: precoRef,
       });
     }
 
@@ -645,6 +657,7 @@ export class PEVSEngine {
       pontos_a_complementar: pontos,
       gerado_em: this.cfg.now().toISOString(),
       modelo_auditor: "gemini-3-pro",
+      preco_referencia: precoRef,
     });
   }
 
