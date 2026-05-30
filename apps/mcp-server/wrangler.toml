@@ -12,6 +12,10 @@ binding = "AI"
 binding = "VECTORIZE"
 index_name = "legislacao-tributaria"
 
+[[vectorize]]
+binding = "VECTORIZE_CATMAT"
+index_name = "catmat-catser"
+
 [[r2_buckets]]
 binding = "R2_LEIS"
 bucket_name = "vectorgov-t-leis"

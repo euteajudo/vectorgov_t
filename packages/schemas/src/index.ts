@@ -43,3 +43,8 @@ export * from "./calculo.js";
 
 // Notebook chat (NotebookLM-like)
 export * from "./notebook.js";
+
+// Vantajosidade: catálogo + preços públicos + pesquisa web
+export * from "./catalogo.js";
+export * from "./precos.js";
+export * from "./pesquisa-web.js";

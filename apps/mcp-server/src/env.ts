@@ -26,6 +26,10 @@ export interface Env {
   // Vectorize
   VECTORIZE: VectorizeIndex;
 
+  // Índice de catálogo CATMAT/CATSER (separado das leis). Opcional: as tools de
+  // catálogo erram com clareza se ausente. Populado pelo ETL (scripts/catalogo-etl).
+  VECTORIZE_CATMAT?: VectorizeIndex;
+
   // R2 buckets
   R2_LEIS: R2Bucket;
   R2_SKILLS: R2Bucket;
@@ -57,4 +61,7 @@ export interface Env {
   GOOGLE_API_KEY?: string;
   INGESTION_API_SECRET?: string;
   ENABLE_GOLDEN_SET_MOCKS?: string;
+
+  // Tavily (pesquisa web tier 2) — `wrangler secret put TAVILY_API_KEY`.
+  TAVILY_API_KEY?: string;
 }
