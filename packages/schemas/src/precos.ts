@@ -134,3 +134,25 @@ export const ConsultarPrecosInputSchema = z.object({
   data_fim: z.string().regex(DATA_YMD).optional(),
 });
 export type ConsultarPrecosInput = z.infer<typeof ConsultarPrecosInputSchema>;
+
+/**
+ * Input da tool `buscar_documentos_suporte` (Módulo C — exigência legal).
+ * MVP: lista ARPs por janela de vigência/publicação, opcionalmente do CNPJ do
+ * órgão. É deliberadamente "por órgão+período" (não há vínculo 1:1 entre o
+ * idCompra do Compras.gov e o numeroControlePNCP da Consulta).
+ */
+export const BuscarDocumentosInputSchema = z.object({
+  data_inicio: z.string().regex(DATA_YMD),
+  data_fim: z.string().regex(DATA_YMD),
+  cnpj_orgao: z.string().optional(),
+  max: z.number().int().min(1).max(50).default(20),
+});
+export type BuscarDocumentosInput = z.infer<typeof BuscarDocumentosInputSchema>;
+
+/** Saída da tool `buscar_documentos_suporte`. */
+export const BuscarDocumentosOutputSchema = z.object({
+  fonte: z.literal("pncp_atas").default("pncp_atas"),
+  total: z.number().int().nonnegative(),
+  documentos: z.array(DocumentoSuporteSchema),
+});
+export type BuscarDocumentosOutput = z.infer<typeof BuscarDocumentosOutputSchema>;

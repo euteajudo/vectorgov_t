@@ -17,6 +17,7 @@
 import { z } from "zod";
 import { CitacaoVerificadaSchema } from "./citacao.js";
 import { CalculoTributarioSchema } from "./calculo.js";
+import { PrecoReferenciaSchema } from "./precos.js";
 
 /**
  * Veredito macro da análise.
@@ -109,6 +110,13 @@ export const AnaliseReequilibrioSchema = z
      * Default: "gemini-3-pro" (Auditor exige modelo Pro, não Flash).
      */
     modelo_auditor: z.string().min(1).default("gemini-3-pro"),
+
+    /**
+     * Preço de referência apurado na análise de vantajosidade (mediana de
+     * preços públicos aderentes + amostras + documentos de suporte). Opcional —
+     * null quando a análise não envolveu pesquisa de preço.
+     */
+    preco_referencia: PrecoReferenciaSchema.nullable().default(null),
   })
   .refine(
     (a) =>

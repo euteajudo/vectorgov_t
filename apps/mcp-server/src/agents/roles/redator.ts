@@ -109,6 +109,13 @@ export function criarRedator(): AgentRole<RedatorInput, Parecer> {
           )
           .join("\n") || "  (nenhuma citação na análise)";
 
+      // Resumo do preço de referência (vantajosidade) para a seção IV.
+      const pr = input.analise.preco_referencia;
+      const precoParaPrompt =
+        pr && pr.estatisticas.mediana_centavos !== null
+          ? `Preço de referência (vantajosidade) — mencione na seção IV: mediana R$ ${(pr.estatisticas.mediana_centavos / 100).toFixed(2)} por ${pr.estatisticas.unidade_fornecimento_base ?? "unidade de fornecimento"} (n=${pr.estatisticas.n} amostras públicas aderentes; fonte ${pr.fonte}; ${pr.documentos_suporte.length} doc(s) de suporte).`
+          : "Sem pesquisa de preço de referência nesta análise.";
+
       // O LLM gera APENAS a redação (seções + conclusão + recomendações).
       // Os campos determinísticos (id, analise_id, cabeçalho, citações,
       // cálculos, gerado_em) são injetados pelo código — o modelo não
@@ -131,6 +138,7 @@ Citações APROVADAS (cite norma e artigo na fundamentação; NÃO reproduza has
 ${citacoesParaPrompt}
 
 Cálculos disponíveis na análise: ${input.analise.calculos.length}
+${precoParaPrompt}
 
 Cabeçalho (já definido — NÃO precisa gerar):
 - número=${input.cabecalho_meta.numero}
@@ -169,6 +177,7 @@ preenchidos automaticamente — foque no texto jurídico.`,
         recomendacoes: redacao.recomendacoes ?? [],
         citacoes: input.analise.citacoes,
         calculos: input.analise.calculos,
+        preco_referencia: input.analise.preco_referencia ?? null,
         gerado_em: new Date().toISOString(),
       });
       contexto.logger.info("redator.executar concluído", {

@@ -42,6 +42,7 @@ import {
 
 // Vantajosidade — preços públicos (Compras.gov) + pesquisa web (Tavily)
 import { consultarPrecosPraticadosTool } from "./precos/consultar-precos-praticados.js";
+import { buscarDocumentosSuporteTool } from "./precos/buscar-documentos-suporte.js";
 import { pesquisarWebTool } from "./web/pesquisar-web.js";
 
 // Catálogo CATMAT/CATSER — resolução de descrição -> código
@@ -69,6 +70,7 @@ export const MCP_TOOLS: ToolDescriptor[] = [
   pesquisarWebTool,
   buscarCatalogoSemanticoTool,
   grepCatalogoTool,
+  buscarDocumentosSuporteTool,
 ];
 
 const BY_NAME: Map<string, ToolDescriptor> = new Map(

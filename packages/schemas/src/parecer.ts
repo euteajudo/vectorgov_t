@@ -18,6 +18,7 @@
 import { z } from "zod";
 import { CitacaoVerificadaSchema } from "./citacao.js";
 import { CalculoTributarioSchema } from "./calculo.js";
+import { PrecoReferenciaSchema } from "./precos.js";
 
 /**
  * Cabeçalho administrativo do parecer (metadados).
@@ -127,6 +128,12 @@ export const ParecerSchema = z
 
     /** Cálculos demonstrados na seção IV. */
     calculos: z.array(CalculoTributarioSchema).default([]),
+
+    /**
+     * Preço de referência (vantajosidade), quando apurado na análise.
+     * Opcional — null quando a análise não envolveu pesquisa de preço.
+     */
+    preco_referencia: PrecoReferenciaSchema.nullable().default(null),
 
     /** Timestamp ISO 8601 da geração. */
     gerado_em: z

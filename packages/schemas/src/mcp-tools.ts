@@ -554,5 +554,6 @@ export const MCP_TOOL_NAMES = [
   "pesquisar_web",
   "buscar_catalogo_semantico",
   "grep_catalogo",
+  "buscar_documentos_suporte",
 ] as const;
 export type McpToolName = (typeof MCP_TOOL_NAMES)[number];
