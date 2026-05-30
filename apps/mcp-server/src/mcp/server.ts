@@ -202,7 +202,11 @@ async function dispatch(
       if (findSkillTool(callParams.name)) {
         try {
           const data = await invokeTool(env, callParams.name, callParams.arguments);
-          return jsonRpcSuccess(id, { content: data });
+          // Spec MCP: `content` deve ser uma lista de content-blocks. As skill
+          // tools retornam objetos estruturados — embrulhar com `toolEnvelope`
+          // (igual às tools de lei) em vez de expor o objeto cru, que clientes
+          // estritos (claude.ai) rejeitam por schema.
+          return jsonRpcSuccess(id, toolEnvelope(data));
         } catch (err) {
           if (err instanceof ToolInputError) {
             return jsonRpcError(id, -32602, err.message, err.details);

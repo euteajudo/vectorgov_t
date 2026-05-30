@@ -125,6 +125,32 @@ describe("POST /mcp/v1 — tools/call", () => {
     const err = json.error as { code: number; message: string };
     expect(err.code).toBe(-32602);
   });
+
+  // Regressão: as skill tools embrulhavam o retorno cru como `{ content: data }`,
+  // produzindo `content` = objeto em vez de lista de content-blocks. Clientes
+  // estritos (claude.ai) rejeitavam por schema. O envelope agora é o mesmo das
+  // tools de lei: `content: [{ type: "text", text: JSON.stringify(...) }]`.
+  it("skill tool devolve envelope MCP válido (content é lista de blocks) mesmo vazio", async () => {
+    const { json } = await rpcCall({
+      jsonrpc: "2.0",
+      id: 5,
+      method: "tools/call",
+      params: { name: "skill_listar", arguments: {} },
+    });
+    expect(json.error).toBeUndefined();
+    const result = json.result as {
+      content: Array<{ type: string; text: string }>;
+    };
+    expect(Array.isArray(result.content)).toBe(true);
+    expect(result.content.length).toBeGreaterThan(0);
+    const bloco = result.content[0]!;
+    expect(bloco.type).toBe("text");
+    expect(typeof bloco.text).toBe("string");
+    // O payload da skill segue acessível, agora dentro do bloco de texto.
+    const payload = JSON.parse(bloco.text) as { total: number; skills: unknown[] };
+    expect(payload.total).toBe(0);
+    expect(payload.skills).toEqual([]);
+  });
 });
 
 describe("POST /mcp/v1 — payload inválido", () => {
