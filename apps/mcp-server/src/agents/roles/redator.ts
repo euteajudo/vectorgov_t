@@ -13,8 +13,43 @@
  */
 import type { AgentRole, AgentContext, SkillFull } from "../types.js";
 import { montarSystemPrompt } from "../types.js";
-import { ParecerSchema, type Parecer, type AnaliseReequilibrio } from "@vectorgov-t/schemas";
+import {
+  ParecerSchema,
+  RedacaoParecerSchema,
+  type Parecer,
+  type ParecerSecao,
+  type AnaliseReequilibrio,
+} from "@vectorgov-t/schemas";
 import { type TipoDocumentoRedator } from "./_io-schemas.js";
+
+/** Numerais e títulos padrão das 5 seções formais (I-V). */
+const SECOES_ROMANAS = ["I", "II", "III", "IV", "V"] as const;
+const SECOES_TITULOS = [
+  "Relatório",
+  "Fundamentação",
+  "Conclusão",
+  "Cálculos e Demonstrativos",
+  "Recomendações",
+];
+
+/**
+ * Normaliza as seções geradas pelo LLM para EXATAMENTE 5, na ordem I-V,
+ * com conteúdo mínimo. Rede de segurança: garante que o `ParecerSchema`
+ * (que exige `.length(5)` na ordem I-V e conteúdo ≥ 50 chars) sempre passe,
+ * mesmo que o modelo gere menos seções, fora de ordem ou curtas demais.
+ * No caso comum (5 seções bem-formadas) preserva o que o modelo produziu.
+ */
+function normalizarSecoes(secoes: ParecerSecao[]): ParecerSecao[] {
+  return SECOES_ROMANAS.map((romano, i) => {
+    const achada = secoes.find((s) => s.numero === romano) ?? secoes[i];
+    const titulo = achada?.titulo?.trim() || SECOES_TITULOS[i]!;
+    let conteudo = achada?.conteudo?.trim() ?? "";
+    if (conteudo.length < 50) {
+      conteudo = `${SECOES_TITULOS[i]}: sem detalhamento adicional do modelo para este caso concreto.`;
+    }
+    return { numero: romano, titulo, conteudo };
+  });
+}
 
 export interface RedatorInput {
   analise: AnaliseReequilibrio;
@@ -66,20 +101,38 @@ export function criarRedator(): AgentRole<RedatorInput, Parecer> {
         );
       }
       const system = montarSystemPrompt(SYSTEM_BASE, skills);
+      const citacoesParaPrompt =
+        input.analise.citacoes
+          .map(
+            (c, i) =>
+              `  ${i + 1}. ${c.norma} — ${c.artigo}: "${c.texto_literal.slice(0, 220)}${c.texto_literal.length > 220 ? "…" : ""}"`,
+          )
+          .join("\n") || "  (nenhuma citação na análise)";
+
+      // O LLM gera APENAS a redação (seções + conclusão + recomendações).
+      // Os campos determinísticos (id, analise_id, cabeçalho, citações,
+      // cálculos, gerado_em) são injetados pelo código — o modelo não
+      // precisa reproduzir hashes SHA-256 / UUIDs, o que quebrava o schema
+      // ("No object generated: response did not match schema").
       const result = await contexto.llm.generateObject({
         modelo: contexto.modelos?.pevs_redator ?? "gemini-3.5-flash",
         system,
         messages: [
           {
             role: "user",
-            content: `Análise pronta:
-- Veredito: ${input.analise.veredito}
-- Score confiança: ${input.analise.score_confianca}
-- Fundamentação (resumo): ${input.analise.fundamentacao.slice(0, 600)}...
-- Citações APROVADAS: ${input.analise.citacoes.length}
-- Cálculos: ${input.analise.calculos.length}
+            content: `Você vai redigir um parecer a partir desta análise JÁ VERIFICADA pelo Auditor.
 
-Cabeçalho:
+Veredito: ${input.analise.veredito}
+Score de confiança: ${input.analise.score_confianca}
+Fundamentação técnica (base):
+${input.analise.fundamentacao.slice(0, 1500)}
+
+Citações APROVADAS (cite norma e artigo na fundamentação; NÃO reproduza hashes — elas entram no parecer automaticamente):
+${citacoesParaPrompt}
+
+Cálculos disponíveis na análise: ${input.analise.calculos.length}
+
+Cabeçalho (já definido — NÃO precisa gerar):
 - número=${input.cabecalho_meta.numero}
 - parecerista=${input.cabecalho_meta.parecerista}
 - órgão=${input.cabecalho_meta.orgao}
@@ -91,18 +144,38 @@ ID da análise (foreign key): ${input.analise.id}
 Tipo de documento: ${input.tipo_documento}
 Timestamp ISO de geração: ${new Date().toISOString()}
 
-Produza o parecer formal com 5 seções (I-V) em ordem.`,
+Produza APENAS a REDAÇÃO em 5 seções, na ordem I, II, III, IV, V
+(Relatório, Fundamentação, Conclusão, Cálculos e Demonstrativos,
+Recomendações), cada uma com ao menos 50 caracteres; mais a conclusão
+objetiva (1 frase, até ~480 chars, alinhada ao veredito) e as
+recomendações práticas. Identificação, citações e cálculos são
+preenchidos automaticamente — foque no texto jurídico.`,
           },
         ],
-        schema: ParecerSchema,
+        schema: RedacaoParecerSchema,
         tag: "redator.formatar",
         temperatura: 0.3,
       });
+
+      // Monta o Parecer final programaticamente (mesmo princípio de
+      // `montarAnalise`): a prosa vem do LLM, o resto vem da análise/input.
+      const redacao = result.object;
+      const parecer: Parecer = ParecerSchema.parse({
+        id: input.parecer_id,
+        analise_id: input.analise.id,
+        cabecalho: input.cabecalho_meta,
+        secoes: normalizarSecoes(redacao.secoes),
+        conclusao_objetiva: redacao.conclusao_objetiva.trim().slice(0, 500),
+        recomendacoes: redacao.recomendacoes ?? [],
+        citacoes: input.analise.citacoes,
+        calculos: input.analise.calculos,
+        gerado_em: new Date().toISOString(),
+      });
       contexto.logger.info("redator.executar concluído", {
-        parecer_id: result.object.id,
+        parecer_id: parecer.id,
         tracingId: contexto.tracingId,
       });
-      return result.object;
+      return parecer;
     },
   };
 }

@@ -65,6 +65,27 @@ export const RecomendacaoSchema = z.object({
 export type Recomendacao = z.infer<typeof RecomendacaoSchema>;
 
 /**
+ * Redação do parecer — a parte que o LLM (Redator) de fato gera.
+ *
+ * Contém APENAS a prosa jurídica: as seções, a conclusão objetiva e as
+ * recomendações. Os campos determinísticos do `Parecer` (id, analise_id,
+ * cabecalho, citacoes, calculos, gerado_em) NÃO são pedidos ao LLM — o
+ * código os injeta a partir da análise verificada e do input. Isso evita
+ * que o modelo precise reproduzir hashes SHA-256, UUIDs e timestamps,
+ * o que tornava o `generateObject` frágil ("response did not match schema").
+ *
+ * `secoes` é tolerante aqui (min 1); o Redator normaliza para exatamente
+ * 5 seções na ordem I-V antes de montar o `Parecer` final.
+ */
+export const RedacaoParecerSchema = z.object({
+  secoes: z.array(ParecerSecaoSchema).min(1, "ao menos uma seção"),
+  conclusao_objetiva: z.string().min(20, "conclusão objetiva muito curta"),
+  recomendacoes: z.array(RecomendacaoSchema).default([]),
+});
+
+export type RedacaoParecer = z.infer<typeof RedacaoParecerSchema>;
+
+/**
  * Parecer formal — output do Feature 2.
  *
  * Invariantes garantidos por `.refine`:
