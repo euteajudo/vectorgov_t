@@ -9,7 +9,9 @@ account_id = "a89dbdb0224cd8d2292cda8a038bc297"
 [[containers]]
 class_name = "IngestionContainer"
 image = "./Dockerfile"
-instance_type = "basic"  # 1 vCPU, 1 GiB RAM, 4 GB disk
+# `standard` = 4 GiB RAM. `basic` (1 GiB) dava internal error/OOM no parse da
+# LC 214 (53 MB, 500+ artigos) na fase parsing. Docs menores cabiam em 1 GiB.
+instance_type = "standard"  # 4 GiB RAM
 max_instances = 3
 
 # Durable Object binding — necessário para Containers
