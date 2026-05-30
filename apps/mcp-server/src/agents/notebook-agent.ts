@@ -872,6 +872,15 @@ export class NotebookAgent {
         const meta = await this.getMeta();
         return Response.json(meta);
       }
+      if (request.method === "POST" && pathname === "/excluir") {
+        // Apaga todo o storage do DO (documento, chunks, histórico). O tipo
+        // local de `storage` é narrowado (KV & { sql }); `deleteAll` existe no
+        // DurableObjectStorage real.
+        await (
+          this.state.storage as unknown as { deleteAll: () => Promise<void> }
+        ).deleteAll();
+        return Response.json({ excluido: true });
+      }
       if (request.method === "POST" && pathname === "/anexar") {
         const body = (await request.json()) as {
           documento_nome: string;

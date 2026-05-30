@@ -43,6 +43,7 @@ function extractFormData(form: FormData):
         ano: number;
         dataPublicacao: string;
         reingestao: boolean;
+        ingestaoId?: string;
       };
     }
   | { ok: false; error: string } {
@@ -92,6 +93,22 @@ function extractFormData(form: FormData):
     reingestao = reingestaoRaw === "true" || reingestaoRaw === "1";
   }
 
+  // ID opcional do cliente — permite o front navegar para a tela de status
+  // (polling) ANTES do pipeline terminar, mostrando progresso desde o início.
+  // Sem ele, o orquestrador gera o próprio UUID.
+  const ingestaoIdRaw = form.get("ingestao_id");
+  let ingestaoId: string | undefined;
+  if (typeof ingestaoIdRaw === "string" && ingestaoIdRaw.length > 0) {
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        ingestaoIdRaw,
+      )
+    ) {
+      return { ok: false, error: "ingestao_id, se enviado, deve ser UUID" };
+    }
+    ingestaoId = ingestaoIdRaw;
+  }
+
   // Validação Zod aplicada na metadata (mas não no File).
   const parsed = IngestaoIniciarInputSchema.safeParse({
     lei_id: leiId,
@@ -119,6 +136,7 @@ function extractFormData(form: FormData):
       ano: parsed.data.ano,
       dataPublicacao: parsed.data.data_publicacao,
       reingestao: parsed.data.reingestao,
+      ingestaoId,
     },
   };
 }
@@ -156,8 +174,9 @@ export async function handleIngestaoIniciar(
   }
   const data = extracted.data;
 
-  // Cria status pending no KV.
-  const id = newIngestaoId();
+  // Cria status pending no KV. Usa o id do cliente se enviado (permite o front
+  // fazer polling imediato na tela de status), senão gera um.
+  const id = data.ingestaoId ?? newIngestaoId();
   const initial = await createStatus(env, { id, leiId: data.leiId });
 
   // Snapshot do PDF em memória — `File` lê só uma vez; precisamos do Blob

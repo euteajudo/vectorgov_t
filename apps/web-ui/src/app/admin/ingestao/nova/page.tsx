@@ -86,21 +86,26 @@ export default function NovaIngestaoPage(): JSX.Element {
     // `file` é não-null aqui por causa da validação acima.
     const arquivoOk = file as File;
 
+    // Id gerado no cliente: navegamos para a tela de status IMEDIATAMENTE (ela
+    // faz polling e mostra a barra desde o início). O upload (sync) roda em
+    // background e sobrevive à navegação SPA; o orquestrador grava o status no
+    // KV a cada fase. Falha do pipeline aparece como status "failed" na tela.
+    const ingestaoId = crypto.randomUUID();
     setEnviando(true);
-    try {
-      const resp = await uploadNorma(arquivoOk, {
+    void uploadNorma(
+      arquivoOk,
+      {
         lei_id: form.lei_id.trim(),
         lei_tipo: form.lei_tipo,
         numero: form.numero.trim(),
         ano: Number.parseInt(form.ano, 10),
         data_publicacao: form.data_publicacao,
-      });
-      router.push(`/admin/ingestao/status/${resp.ingestao_id}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setErro(msg);
-      setEnviando(false);
-    }
+      },
+      ingestaoId,
+    ).catch(() => {
+      // A tela de status reflete falha/404 — nada a tratar aqui.
+    });
+    router.push(`/admin/ingestao/status/${ingestaoId}`);
   }
 
   return (
