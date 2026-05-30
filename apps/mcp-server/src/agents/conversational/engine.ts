@@ -26,10 +26,16 @@ import type {
 import { consoleLogger } from "../types.js";
 import { buildToolsForPEVS } from "../tools-adapter.js";
 import { extrairPeticaoDeTexto } from "./peticao-extractor.js";
-import { rodarAnalisePeticao } from "../run-analise.js";
+import { rodarAnalisePeticao, criarEnginePEVS } from "../run-analise.js";
+import { getSessionAgentClient } from "../session-loader.js";
+import { toolsDeTransicaoPermitidas, montarBlocoEstado } from "./fsm.js";
+import type { DecisaoFeature2 } from "../pevs-engine.js";
 import {
   PeticaoSchema,
+  OferecerOpcoesInputSchema,
+  GerarParecerInputSchema,
   type PeticaoRascunho,
+  type EstadoConversa,
 } from "@vectorgov-t/schemas";
 import type { NotebookAgent } from "../notebook-agent.js";
 import { MCP_TOOLS, type ToolDescriptor } from "../../mcp/tools/index.js";
@@ -118,8 +124,11 @@ export function buildTools(
   llm: LLMClient,
   notebook: NotebookAgent,
   apiKey: string | null = null,
+  estado: EstadoConversa = "PETICAO_EXTRAIDA",
 ): Record<string, ToolForLLM> {
   const tools: Record<string, ToolForLLM> = {};
+  // Gating do trilho: quais tools de transição podem aparecer nesta fase.
+  const transicaoOk = new Set(toolsDeTransicaoPermitidas(estado));
 
   // 1. Tools MCP read-only. Não expomos `skill_publicar` no chat porque
   // prompt de usuário não deve conseguir gravar em R2/alterar skills ativas.
@@ -419,6 +428,10 @@ export function buildTools(
       }
 
       const { analise } = await rodarAnalisePeticao(env, parsed.data, apiKey);
+      const peticaoId = analise.peticao_id ?? analise.id;
+      // Fecha a transição PETICAO_EXTRAIDA→ANALISE_PRONTA da FSM: liga o
+      // notebook à análise para o estado seguinte ser derivado do real.
+      await notebook.salvarAnaliseId(peticaoId, analise.veredito);
       return {
         veredito: analise.veredito,
         score_confianca: analise.score_confianca,
@@ -431,10 +444,80 @@ export function buildTools(
           unidade: c.unidade_final,
           sucesso: c.sucesso,
         })),
-        peticao_id: analise.peticao_id ?? analise.id,
+        peticao_id: peticaoId,
       };
     },
   };
+
+  // 7. Tool de condução: apresenta os chips de próximas ações (sempre on).
+  tools["oferecer_opcoes"] = {
+    description:
+      "Apresenta ao usuário um menu de PRÓXIMAS AÇÕES como botões clicáveis. " +
+      "Use ao FIM de cada resposta para conduzir o usuário ao próximo passo do " +
+      "fluxo (extrair → analisar → gerar parecer). `titulo` é uma pergunta curta; " +
+      "`opcoes` são 1 a 4 ações curtas que o usuário pode clicar.",
+    inputSchema: OferecerOpcoesInputSchema,
+    // Echo: o frontend lê o tool_result e renderiza os chips.
+    execute: async (input) => input,
+  };
+
+  // 8. Tool de transição: gera o parecer formal (Feature 2) dentro do chat.
+  tools["gerar_parecer"] = {
+    description:
+      "Gera o PARECER FORMAL (documento I-V) a partir da análise já concluída. " +
+      "Use quando o usuário pedir o parecer. Só funciona depois da análise e se o " +
+      "veredito não for inconclusivo.",
+    inputSchema: GerarParecerInputSchema,
+    execute: async () => {
+      if (!apiKey) {
+        return { erro: "Configure a chave Google (API key) para gerar o parecer." };
+      }
+      const link = await notebook.lerAnaliseId();
+      if (!link) {
+        return { erro: "Ainda não há análise. Rode a análise do pedido primeiro." };
+      }
+      if (link.veredito === "inconclusiva") {
+        return {
+          erro:
+            "A análise ficou inconclusiva — não dá para emitir parecer. " +
+            "Complemente a documentação e reanalise.",
+        };
+      }
+      const sessionAgent = getSessionAgentClient(env);
+      const res = await sessionAgent.carregarAnalise(link.analise_id);
+      if (!res) {
+        return { erro: "Análise não encontrada no store." };
+      }
+      const decisao: DecisaoFeature2 = {
+        tipo_documento: "parecer_formal",
+        cabecalho_meta: {
+          numero: `PARECER-${link.analise_id.slice(0, 8)}`,
+          parecerista: "Vectorgov_t (Auditor + Redator)",
+          orgao: "(órgão não informado)",
+          assunto: `Reequilíbrio econômico-financeiro — contrato ${res.peticao.contrato.numero}`,
+          data: new Date().toISOString().slice(0, 10),
+        },
+      };
+      const engine = await criarEnginePEVS(env, apiKey);
+      const { parecer } = await engine.executarFeature2(res.analise, decisao);
+      return {
+        parecer_id: parecer.id,
+        peticao_id: link.analise_id,
+        link: `/peticoes/${link.analise_id}/parecer`,
+        mensagem: "Parecer formal gerado com sucesso.",
+      };
+    },
+  };
+
+  // Gating final do trilho: remove as tools de transição que NÃO podem
+  // aparecer nesta fase. O Gemini simplesmente não as enxerga fora de hora.
+  for (const t of [
+    "extrair_peticao_do_documento",
+    "analisar_reequilibrio",
+    "gerar_parecer",
+  ]) {
+    if (!transicaoOk.has(t)) delete tools[t];
+  }
 
   return tools;
 }
@@ -519,19 +602,36 @@ export interface ConversarOpts {
   modelo?: import("../llm/types.js").ModeloLLM;
   /** Chave Google do request (WS subprotocol) — necessária para análise PEVS. */
   apiKey?: string | null;
+  /** Fase atual da conversa (derivada pelo NotebookAgent). Define o gating. */
+  estado?: EstadoConversa;
+  /** Rascunho da petição — alimenta o bloco de estado do system prompt. */
+  rascunho?: PeticaoRascunho | null;
+  /** Veredito da análise corrente, se já houver. */
+  veredito?: string | null;
 }
 
 export async function conversar(opts: ConversarOpts): Promise<ResultadoConversa> {
   const { env, llm, notebook, userText, onEvent, signal } = opts;
   const modeloEscolhido = opts.modelo ?? "gemini-3.5-flash";
+  const estado = opts.estado ?? "PETICAO_EXTRAIDA";
   const meta = await notebook.getMeta();
   const historico = await notebook.listarMensagens();
-  const tools = buildTools(env, llm, notebook, opts.apiKey ?? null);
-  const system = buildSystemPrompt({
-    nome: meta.documento_nome,
-    total_paginas: meta.documento_total_paginas,
-    total_chars: meta.documento_total_chars,
-  });
+  // Gating por fase: o engine só expõe ao Gemini as tools válidas agora.
+  const tools = buildTools(env, llm, notebook, opts.apiKey ?? null, estado);
+  // O system prompt carrega o bloco [ESTADO DA CONVERSA] determinístico —
+  // o backend dizendo ao condutor onde ele está e o que pode fazer.
+  const system =
+    buildSystemPrompt({
+      nome: meta.documento_nome,
+      total_paginas: meta.documento_total_paginas,
+      total_chars: meta.documento_total_chars,
+    }) +
+    "\n\n" +
+    montarBlocoEstado({
+      estado,
+      rascunho: opts.rascunho ?? null,
+      veredito: opts.veredito ?? null,
+    });
   const messages = buildMessages(historico, userText);
 
   let textoAcumulado = "";
