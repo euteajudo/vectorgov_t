@@ -550,5 +550,7 @@ export const MCP_TOOL_NAMES = [
   "fs_grep",
   "calcular_reequilibrio_tributario",
   "classificar_merito",
+  "consultar_precos_praticados",
+  "pesquisar_web",
 ] as const;
 export type McpToolName = (typeof MCP_TOOL_NAMES)[number];
