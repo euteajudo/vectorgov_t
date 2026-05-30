@@ -1,0 +1,14 @@
+{
+  "name": "catalogo-etl",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ETL offline do catálogo CATMAT/CATSER: XLSX -> D1 (SQL) + Vectorize (NDJSON via bge-m3).",
+  "scripts": {
+    "parse": "node --max-old-space-size=4096 parse.mjs",
+    "embed": "node embed.mjs"
+  },
+  "dependencies": {
+    "xlsx": "0.18.5"
+  }
+}
