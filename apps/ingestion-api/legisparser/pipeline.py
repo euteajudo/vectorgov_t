@@ -37,17 +37,15 @@ from .models.parse_result import DispositivoChunk, NormaMetadata, ParseResult
 logger = logging.getLogger(__name__)
 
 
-# Defaults inlinados (no parser original vinham de config.py)
-DEFAULT_DPI = 300
+# Default inlinado (no parser original vinha de config.py)
 PIPELINE_VERSION = "vectorgov-t-1.0.0"
 
 
 class LegisPipeline:
     """Pipeline determinista PyMuPDF + Regex para leis tributarias."""
 
-    def __init__(self, dpi: int = DEFAULT_DPI):
-        self.dpi = dpi
-        self.extractor = PyMuPDFExtractor(dpi=dpi)
+    def __init__(self) -> None:
+        self.extractor = PyMuPDFExtractor()
 
     # =========================================================================
     # ENTRY POINT

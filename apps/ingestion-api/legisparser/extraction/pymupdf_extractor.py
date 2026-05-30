@@ -1,14 +1,13 @@
 """
-PyMuPDF Extractor - Extração determinística de texto e imagens de PDFs.
+PyMuPDF Extractor - Extração determinística de texto de PDFs.
 
 Usa PyMuPDF (fitz) para:
-1. Renderizar páginas como PNG (para envio ao VLM)
-2. Extrair blocos de texto via get_text("dict") com bboxes em PDF space
-3. Construir canonical_text a partir dos blocos em reading order
-4. Normalizar cada linha DURANTE a construção (NFC + rstrip) para que
+1. Extrair blocos de texto via get_text("dict") com bboxes em PDF space
+2. Construir canonical_text a partir dos blocos em reading order
+3. Normalizar cada linha DURANTE a construção (NFC + rstrip) para que
    offsets sejam nativos ao canonical_text final
-5. Calcular char_start/char_end DURANTE a concatenação (offsets nativos)
-6. Coletar dimensões de cada página e do pixmap
+4. Calcular char_start/char_end DURANTE a concatenação (offsets nativos)
+5. Coletar dimensões de cada página em pontos PDF
 
 O texto extraído pelo PyMuPDF é DETERMINÍSTICO: mesmo PDF + mesma versão
 PyMuPDF = mesmo texto sempre. Isso garante idempotência nos offsets canônicos.
@@ -18,9 +17,13 @@ canonical_text retornado já está no formato final, tornando a chamada
 normalize_canonical_text() no pipeline uma operação idempotente (no-op).
 
 Offsets são consequência natural da concatenação, não mapeamento posterior.
+
+Nota: o caminho é 100% texto/regex (sem VLM). Versões anteriores renderizavam
+cada página como PNG/base64 a 300 DPI "para envio ao VLM"; isso foi removido
+porque nada consumia as imagens e o pico de memória (centenas de MB em normas
+grandes) estourava o container de 1 GiB.
 """
 
-import base64
 import logging
 import unicodedata
 
@@ -30,24 +33,16 @@ logger = logging.getLogger(__name__)
 
 
 class PyMuPDFExtractor:
-    """Extrai páginas do PDF: imagens (para VLM) + blocos de texto com offsets."""
-
-    def __init__(self, dpi: int = 300):
-        """
-        Args:
-            dpi: Resolução para renderização de imagens (default 300 DPI).
-        """
-        self.dpi = dpi
+    """Extrai páginas do PDF: blocos de texto com offsets canônicos nativos."""
 
     def extract_pages(self, pdf_bytes: bytes) -> tuple[list[PageData], str]:
         """
         Extrai dados de todas as páginas do PDF.
 
         Para cada página:
-        - Renderiza como PNG no DPI configurado (para envio ao VLM)
         - Extrai blocos de texto via get_text("dict", sort=True) com bboxes
         - Concatena blocos em reading order calculando offsets incrementais
-        - Coleta dimensões (width, height) em pontos PDF e pixmap em pixels
+        - Coleta dimensões (width, height) em pontos PDF
 
         Args:
             pdf_bytes: Conteúdo binário do PDF
@@ -73,25 +68,16 @@ class PyMuPDFExtractor:
 
         try:
             total_pages = len(doc)
-            logger.info(f"PyMuPDF: extraindo {total_pages} páginas (DPI={self.dpi})")
+            logger.info(f"PyMuPDF: extraindo {total_pages} páginas")
 
             for page_idx in range(total_pages):
                 page = doc[page_idx]
                 page_number = page_idx + 1  # 1-indexed
 
-                # Renderiza como PNG
-                zoom = self.dpi / 72.0  # 72 DPI é o padrão do PDF
-                matrix = fitz.Matrix(zoom, zoom)
-                pixmap = page.get_pixmap(matrix=matrix)
-                image_png = pixmap.tobytes("png")
-                image_b64 = base64.b64encode(image_png).decode("ascii")
-
-                # Dimensões da página em pontos PDF e do pixmap em pixels
+                # Dimensões da página em pontos PDF
                 rect = page.rect
                 page_width = rect.width
                 page_height = rect.height
-                img_width = pixmap.width
-                img_height = pixmap.height
 
                 # Detecta linhas de strikethrough (riscado) na página.
                 # PDFs do Planalto mostram versões revogadas com texto riscado.
@@ -217,13 +203,9 @@ class PyMuPDFExtractor:
 
                 pages.append(PageData(
                     page_number=page_number,
-                    image_png=image_png,
-                    image_base64=image_b64,
                     text=page_text,
                     width=page_width,
                     height=page_height,
-                    img_width=img_width,
-                    img_height=img_height,
                     blocks=block_data_list,
                     char_start=page_char_start,
                     char_end=page_char_end,
@@ -232,9 +214,7 @@ class PyMuPDFExtractor:
                 logger.debug(
                     f"Página {page_number}/{total_pages}: "
                     f"{len(block_data_list)} blocos, {len(page_text)} chars, "
-                    f"{len(image_png)} bytes PNG, "
-                    f"{page_width:.0f}x{page_height:.0f} pts, "
-                    f"{img_width}x{img_height} px"
+                    f"{page_width:.0f}x{page_height:.0f} pts"
                 )
 
         finally:
