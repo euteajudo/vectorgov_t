@@ -46,6 +46,7 @@ import {
 import {
   handleChatWS,
   handleCriarNotebook,
+  handleExcluirNotebook,
   handleGetNotebook,
   handleListarMensagens,
   handleListarNotebooks,
@@ -241,6 +242,13 @@ async function route(
     /^\/api\/notebooks\/[^/]+$/.test(url.pathname)
   ) {
     return handleGetNotebook(request, env);
+  }
+  // DELETE /api/notebooks/:id
+  if (
+    request.method === "DELETE" &&
+    /^\/api\/notebooks\/[^/]+$/.test(url.pathname)
+  ) {
+    return handleExcluirNotebook(request, env);
   }
 
   if (request.method === "GET" && url.pathname === "/api/skills") {

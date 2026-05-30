@@ -8,8 +8,9 @@
 
 import Link from "next/link";
 import { useEffect, useState, type JSX } from "react";
-import { FilePlus, MessageSquare } from "lucide-react";
+import { FilePlus, MessageSquare, Trash2 } from "lucide-react";
 import {
+  deletarNotebook,
   listarNotebooks,
   type NotebookIdxEntry,
 } from "../../lib/notebooks-api";
@@ -27,6 +28,7 @@ function formatarData(ts: number): string {
 export default function NotebooksPage(): JSX.Element {
   const [notebooks, setNotebooks] = useState<NotebookIdxEntry[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [excluindo, setExcluindo] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelado = false;
@@ -41,6 +43,27 @@ export default function NotebooksPage(): JSX.Element {
       cancelado = true;
     };
   }, []);
+
+  async function handleExcluir(id: string, titulo: string): Promise<void> {
+    if (
+      !window.confirm(
+        `Excluir a conversa "${titulo}"? Esta ação não pode ser desfeita.`,
+      )
+    ) {
+      return;
+    }
+    setExcluindo(id);
+    try {
+      await deletarNotebook(id);
+      setNotebooks((prev) => (prev ? prev.filter((n) => n.id !== id) : prev));
+    } catch (err) {
+      window.alert(
+        `Falha ao excluir: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setExcluindo(null);
+    }
+  }
 
   return (
     <div className="p-6 md:p-8 space-y-6">
@@ -83,26 +106,37 @@ export default function NotebooksPage(): JSX.Element {
       {notebooks && notebooks.length > 0 && (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
           {notebooks.map((nb) => (
-            <Link
-              key={nb.id}
-              href={`/notebooks/${nb.id}`}
-              className="block rounded-lg border border-gray-200 bg-white p-4 transition-colors hover:border-blue-300 hover:bg-blue-50/30"
-            >
-              <div className="flex items-start gap-2">
-                <MessageSquare className="h-4 w-4 mt-0.5 text-blue-600 shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-sm font-medium text-gray-900 truncate">
-                    {nb.titulo}
-                  </h2>
-                  <p className="text-xs text-gray-500 truncate">
-                    {nb.documento_nome ?? "(sem documento anexado)"}
-                  </p>
-                  <p className="mt-1 text-xs text-gray-400">
-                    {formatarData(nb.atualizado_em)}
-                  </p>
+            <div key={nb.id} className="relative">
+              <Link
+                href={`/notebooks/${nb.id}`}
+                className="block rounded-lg border border-gray-200 bg-white p-4 pr-10 transition-colors hover:border-blue-300 hover:bg-blue-50/30"
+              >
+                <div className="flex items-start gap-2">
+                  <MessageSquare className="h-4 w-4 mt-0.5 text-blue-600 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-sm font-medium text-gray-900 truncate">
+                      {nb.titulo}
+                    </h2>
+                    <p className="text-xs text-gray-500 truncate">
+                      {nb.documento_nome ?? "(sem documento anexado)"}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-400">
+                      {formatarData(nb.atualizado_em)}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            </Link>
+              </Link>
+              <button
+                type="button"
+                onClick={() => void handleExcluir(nb.id, nb.titulo)}
+                disabled={excluindo === nb.id}
+                title="Excluir conversa"
+                aria-label="Excluir conversa"
+                className="absolute right-2 top-2 rounded p-1.5 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
           ))}
         </div>
       )}

@@ -19,6 +19,12 @@ import { getStatus } from "../../../../../lib/ingestao-api";
 
 /** Intervalo do polling em ms. */
 const POLL_INTERVAL_MS = 2000;
+/**
+ * Quantos 404 tolerar antes de declarar "não encontrada". Cobre a janela entre
+ * a navegação imediata (cliente cria o id) e a criação do registro no KV pelo
+ * orquestrador (que só acontece depois do upload do PDF). 30 × 2s = 60s.
+ */
+const MAX_404_RETRIES = 30;
 
 type Props = {
   params: Promise<{ id: string }>;
@@ -31,6 +37,8 @@ export default function StatusIngestaoPage({ params }: Props): JSX.Element {
   const [erro, setErro] = useState<string | null>(null);
   const [naoEncontrado, setNaoEncontrado] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const jaViu = useRef(false);
+  const tentativas404 = useRef(0);
 
   // Desembrulha params.
   useEffect(() => {
@@ -55,9 +63,18 @@ export default function StatusIngestaoPage({ params }: Props): JSX.Element {
         const atual = await getStatus(ingestaoId as string);
         if (cancelado) return;
         if (atual === null) {
+          // 404: o registro pode ainda não existir (navegação imediata, com o
+          // upload do PDF em curso). Retenta até o teto; só desiste se o status
+          // nunca tiver aparecido.
+          if (!jaViu.current && tentativas404.current < MAX_404_RETRIES) {
+            tentativas404.current += 1;
+            timerRef.current = setTimeout(() => void tick(), POLL_INTERVAL_MS);
+            return;
+          }
           setNaoEncontrado(true);
           return;
         }
+        jaViu.current = true;
         setStatus(atual);
         setErro(null);
         // Reagenda apenas se ainda não estiver em estado terminal.

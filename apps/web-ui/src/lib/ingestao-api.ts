@@ -77,6 +77,7 @@ export interface NormaListItem {
 export async function uploadNorma(
   pdf: File,
   meta: NormaInput,
+  ingestaoId?: string,
 ): Promise<IngestaoResponse> {
   const form = new FormData();
   form.append("pdf", pdf, pdf.name);
@@ -86,13 +87,14 @@ export async function uploadNorma(
   form.append("ano", String(meta.ano));
   form.append("data_publicacao", meta.data_publicacao);
   form.append("reingestao", "true");
+  // Id gerado no cliente: o front navega para a tela de status (polling) ANTES
+  // do pipeline terminar, então a barra aparece desde o início.
+  if (ingestaoId) form.append("ingestao_id", ingestaoId);
 
-  // ?sync=true força o Worker a aguardar o pipeline completo antes de
-  // responder. Necessário porque ctx.waitUntil() é cancelado pelo runtime
-  // antes do Container Python responder em PDFs > pequenos. Trade-off:
-  // a UI fica em "parsing 5%" até o fim e pula direto pra "done" (sem
-  // progresso intermediário visível). Aceitável até implementarmos
-  // Durable Object Alarm como background driver real.
+  // ?sync=true mantém a conexão aberta durante todo o pipeline (sem o
+  // cancelamento do ctx.waitUntil() em PDFs grandes). O progresso continua
+  // visível porque o orquestrador grava o status no KV a cada fase e a tela de
+  // status faz polling em paralelo com este request.
   const res = await fetch(`${getBaseUrl()}/ingestao/iniciar?sync=true`, {
     method: "POST",
     body: form,
@@ -121,42 +123,50 @@ export async function getStatus(id: string): Promise<IngestaoStatus | null> {
 }
 
 /**
- * Lista normas ingeridas — placeholder até o backend expor um endpoint REST
- * direto. Hoje o catálogo só é acessível via tool MCP `fs_listar_normas`
- * (JSON-RPC). Para evitar bloqueio da UI, retornamos mock determinístico
- * que reflete o shape esperado.
- *
- * TODO(Track G/futuro): quando existir `GET /normas`, trocar o mock por
- * `fetch` real.
+ * Lista as normas realmente ingeridas — lê o catálogo (`_index.json` do R2) via
+ * a tool MCP `fs_listar_normas` (JSON-RPC). É o que faz o botão "Atualizar"
+ * refletir normas recém-ingeridas (antes era um mock fixo).
  */
 export async function listarNormas(): Promise<NormaListItem[]> {
-  // Em produção, poderia tentar o MCP JSON-RPC. Mantemos mock estável.
-  return Promise.resolve([
-    {
-      norma_id: "lc-214-2025",
-      tipo: "lei_complementar",
-      numero: "214",
-      ano: 2025,
-      ementa:
-        "Institui o Imposto sobre Bens e Serviços (IBS), a Contribuição Social sobre Bens e Serviços (CBS) e o Imposto Seletivo (IS).",
-      r2_path: "lc-214-2025/",
-      data_ingestao: "2026-05-20T14:32:00Z",
-      total_dispositivos: 538,
-      status: "vigente",
-    },
-    {
-      norma_id: "ec-132-2023",
-      tipo: "emenda_constitucional",
-      numero: "132",
-      ano: 2023,
-      ementa:
-        "Altera o Sistema Tributário Nacional para promover a reforma da tributação sobre o consumo.",
-      r2_path: "ec-132-2023/",
-      data_ingestao: "2026-05-18T09:10:00Z",
-      total_dispositivos: 21,
-      status: "vigente",
-    },
-  ]);
+  const res = await fetch(`${getBaseUrl()}/mcp/v1`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "fs_listar_normas", arguments: {} },
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Falha ao listar normas (${res.status})`);
+  }
+  const rpc = (await res.json()) as {
+    result?: { content?: Array<{ text?: string }> };
+    error?: { message?: string };
+  };
+  if (rpc.error) {
+    throw new Error(rpc.error.message ?? "erro do MCP ao listar normas");
+  }
+  const texto = rpc.result?.content?.[0]?.text ?? "{}";
+  const data = JSON.parse(texto) as {
+    normas?: Array<{
+      norma_id: string;
+      tipo: string;
+      numero: string;
+      ano: number;
+      ementa: string | null;
+      r2_path: string;
+    }>;
+  };
+  return (data.normas ?? []).map((n) => ({
+    norma_id: n.norma_id,
+    tipo: n.tipo,
+    numero: n.numero,
+    ano: n.ano,
+    ementa: n.ementa,
+    r2_path: n.r2_path,
+  }));
 }
 
 /**

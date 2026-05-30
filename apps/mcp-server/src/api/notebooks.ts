@@ -134,6 +134,41 @@ export async function handleGetNotebook(
 }
 
 /**
+ * DELETE /api/notebooks/:id — exclui a conversa: remove do índice (some da
+ * lista), limpa o storage do DO e o PDF no R2 (ambos best-effort).
+ */
+export async function handleExcluirNotebook(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const id = notebookIdFromPath(url.pathname);
+  if (!id) return errorResponse("id inválido", 400);
+
+  // 1. Remove a entrada do índice — efeito visível (some da listagem).
+  await env.CACHE.delete(`${NOTEBOOK_IDX_PREFIX}${id}`);
+
+  // 2. Best-effort: limpa o storage do Durable Object.
+  try {
+    const stub = pickStub(env, id);
+    await stub.fetch(
+      new Request("https://do.local/excluir", { method: "POST" }),
+    );
+  } catch {
+    // DO já inexistente / erro transitório — não bloqueia a exclusão.
+  }
+
+  // 3. Best-effort: remove o PDF de origem no R2.
+  try {
+    await env.R2_LEIS.delete(`notebooks/${id}/source.pdf`);
+  } catch {
+    // sem PDF anexado ou erro de R2 — ignorar.
+  }
+
+  return jsonResponse({ excluido: true, id });
+}
+
+/**
  * POST /api/notebooks/:id/upload — multipart com PDF; encadeia parse-doc + anexar.
  */
 export async function handleUploadDocumento(

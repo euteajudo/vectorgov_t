@@ -92,6 +92,16 @@ export async function getNotebook(id: string): Promise<NotebookMeta> {
 }
 
 /**
+ * Exclui uma conversa (notebook): some da listagem e limpa documento/histórico.
+ */
+export async function deletarNotebook(id: string): Promise<void> {
+  await fetchJson<{ excluido: boolean }>(
+    `/api/notebooks/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  );
+}
+
+/**
  * Upload do PDF do notebook. Server faz parse-doc e anexa as páginas.
  * Devolve UploadDocumentoOutput. Pode demorar (até 6min em PDFs grandes).
  */
