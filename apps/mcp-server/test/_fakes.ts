@@ -705,6 +705,7 @@ function unusedBinding<T>(name: string): T {
 export interface TestEnvOverrides {
   AI?: Ai;
   VECTORIZE?: VectorizeIndex;
+  VECTORIZE_CATMAT?: VectorizeIndex;
   R2_LEIS?: R2Bucket;
   R2_SKILLS?: R2Bucket;
   DB?: D1Database;
@@ -722,6 +723,7 @@ export function createTestEnv(overrides: TestEnvOverrides = {}): Env {
   return {
     AI: overrides.AI ?? unusedBinding<Ai>("AI"),
     VECTORIZE: overrides.VECTORIZE ?? unusedBinding<VectorizeIndex>("VECTORIZE"),
+    VECTORIZE_CATMAT: overrides.VECTORIZE_CATMAT,
     R2_LEIS: overrides.R2_LEIS ?? unusedBinding<R2Bucket>("R2_LEIS"),
     R2_SKILLS: overrides.R2_SKILLS ?? createFakeR2(),
     DB: overrides.DB ?? unusedBinding<D1Database>("DB"),

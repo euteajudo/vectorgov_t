@@ -39,3 +39,19 @@ export const CatalogoBuscaResultadoSchema = z.object({
   itens: z.array(ItemCatalogoSchema),
 });
 export type CatalogoBuscaResultado = z.infer<typeof CatalogoBuscaResultadoSchema>;
+
+/** Input da tool `buscar_catalogo_semantico` (descrição → código aderente). */
+export const BuscarCatalogoInputSchema = z.object({
+  descricao: z.string().min(3),
+  tipo: TipoCatalogoSchema.optional(),
+  top_k: z.number().int().min(1).max(20).default(8),
+});
+export type BuscarCatalogoInput = z.infer<typeof BuscarCatalogoInputSchema>;
+
+/** Input da tool `grep_catalogo` (varredura textual exata, FTS5/BM25). */
+export const GrepCatalogoInputSchema = z.object({
+  padrao: z.string().min(2),
+  tipo: TipoCatalogoSchema.optional(),
+  max: z.number().int().min(1).max(50).default(20),
+});
+export type GrepCatalogoInput = z.infer<typeof GrepCatalogoInputSchema>;

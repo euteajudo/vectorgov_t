@@ -84,9 +84,11 @@ const sqlStr = (v) => (v === null ? "NULL" : `'${String(v).replace(/'/g, "''")}'
 
 const ndjson = createWriteStream(`${OUT}/itens.ndjson`, { encoding: "utf8" });
 const sql = createWriteStream(`${OUT}/catalogo-d1.sql`, { encoding: "utf8" });
-sql.write("PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\n");
+// Sem BEGIN/COMMIT explícito: o `wrangler d1 execute --file` envolve o arquivo
+// na própria transação e rejeita BEGIN TRANSACTION/SAVEPOINT no SQL.
 
-const CHUNK = 400;
+// 50 linhas por INSERT: acima disso o D1 estoura "statement too long" (SQLITE_TOOBIG).
+const CHUNK = 50;
 let total = 0;
 const resumo = {};
 const vistos = new Set();
@@ -123,7 +125,6 @@ sql.write(
   "INSERT INTO catalogo_fts (catalogo_id,codigo,tipo,grupo,classe,descricao) " +
     "SELECT id,codigo,tipo,grupo,classe,descricao FROM catalogo_itens;\n",
 );
-sql.write("COMMIT;\n");
 ndjson.end();
 sql.end();
 

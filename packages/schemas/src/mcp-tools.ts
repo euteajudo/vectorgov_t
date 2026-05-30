@@ -552,5 +552,7 @@ export const MCP_TOOL_NAMES = [
   "classificar_merito",
   "consultar_precos_praticados",
   "pesquisar_web",
+  "buscar_catalogo_semantico",
+  "grep_catalogo",
 ] as const;
 export type McpToolName = (typeof MCP_TOOL_NAMES)[number];

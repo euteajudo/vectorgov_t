@@ -44,6 +44,10 @@ import {
 import { consultarPrecosPraticadosTool } from "./precos/consultar-precos-praticados.js";
 import { pesquisarWebTool } from "./web/pesquisar-web.js";
 
+// Catálogo CATMAT/CATSER — resolução de descrição -> código
+import { buscarCatalogoSemanticoTool } from "./catalogo/buscar-catalogo-semantico.js";
+import { grepCatalogoTool } from "./catalogo/grep-catalogo.js";
+
 /**
  * Array das 11 tools de leis/fiscais na ordem canônica.
  * As 4 tools de skills NÃO aparecem aqui — são registradas via `registry.ts`
@@ -63,6 +67,8 @@ export const MCP_TOOLS: ToolDescriptor[] = [
   classificarMeritoTool,
   consultarPrecosPraticadosTool,
   pesquisarWebTool,
+  buscarCatalogoSemanticoTool,
+  grepCatalogoTool,
 ];
 
 const BY_NAME: Map<string, ToolDescriptor> = new Map(
