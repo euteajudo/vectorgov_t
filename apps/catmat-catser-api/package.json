@@ -1,0 +1,23 @@
+{
+  "name": "@vectorgov-t/catmat-catser-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Worker dedicado da busca de catálogo CATMAT/CATSER (camada agêntica) — D1 catmat-catser-db + Vectorize catmat-catser",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@vectorgov-t/schemas": "workspace:*",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251201.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0",
+    "wrangler": "^4.59.0"
+  }
+}

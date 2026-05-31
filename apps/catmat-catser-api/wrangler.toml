@@ -1,0 +1,26 @@
+name = "catmat-catser-api"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+account_id = "a89dbdb0224cd8d2292cda8a038bc297"
+
+# Workers AI — embedding (bge-m3) + rerank (bge-reranker-v2-m3) da busca.
+[ai]
+binding = "AI"
+
+# Índice semântico do catálogo (compartilhado com o pipeline de ingestão).
+[[vectorize]]
+binding = "VECTORIZE_CATMAT"
+index_name = "catmat-catser"
+
+# Banco DEDICADO do catálogo (catalogo_itens + catalogo_fts + catalogo_trgm).
+# Migrations aplicadas manualmente (0004 + 0005) — sem migrations_dir aqui para
+# não puxar as migrations das leis.
+[[d1_databases]]
+binding = "DB"
+database_name = "catmat-catser-db"
+database_id = "e361b140-c0c9-4c6b-9aab-b6b4496ef0f9"
+
+[observability]
+enabled = true
