@@ -280,3 +280,31 @@ export async function buscarCatalogoFuzzy(
   const rows = await queryTrgmCatalogo(env, input.padrao, input.tipo, input.max);
   return { modo: "fuzzy", total: rows.length, itens: rows.map(itemFromRow) };
 }
+
+/**
+ * Busca lexical 2-way: FTS5 unicode61 (full-text) + FTS5 trigram (substring),
+ * fundidos por RRF. É a tool lexical exposta ao agente (sem embedding) — rápida
+ * e tolerante a termo parcial.
+ */
+export async function buscarCatalogoLexical(
+  env: Env,
+  input: { padrao: string; tipo?: TipoCatalogo; max: number },
+): Promise<CatalogoBuscaResultado> {
+  const [ftsRows, trgmRows] = await Promise.all([
+    queryFtsCatalogo(env, input.padrao, input.tipo, PER_RANKER_TOP_K),
+    queryTrgmCatalogo(env, input.padrao, input.tipo, PER_RANKER_TOP_K),
+  ]);
+  const rrf = reciprocalRankFusion([
+    ftsRows.map((r) => ({ id: r.catalogo_id })),
+    trgmRows.map((r) => ({ id: r.catalogo_id })),
+  ]);
+  const rowById = new Map<string, CatalogoRow>();
+  for (const r of trgmRows) rowById.set(r.catalogo_id, r);
+  for (const r of ftsRows) rowById.set(r.catalogo_id, r);
+  const itens = Array.from(rowById.keys())
+    .map((id) => ({ id, rrf: rrf.get(id) ?? 0 }))
+    .sort((a, b) => b.rrf - a.rrf)
+    .slice(0, input.max)
+    .map((x) => itemFromRow(rowById.get(x.id)!));
+  return { modo: "grep", total: itens.length, itens };
+}

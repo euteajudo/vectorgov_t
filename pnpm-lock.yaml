@@ -17,9 +17,15 @@ importers:
 
   apps/catmat-catser-api:
     dependencies:
+      '@ai-sdk/google':
+        specifier: ^2.0.0
+        version: 2.0.74(zod@4.4.3)
       '@vectorgov-t/schemas':
         specifier: workspace:*
         version: link:../../packages/schemas
+      ai:
+        specifier: ^5.0.0
+        version: 5.0.192(zod@4.4.3)
       zod:
         specifier: ^4.0.0
         version: 4.4.3
