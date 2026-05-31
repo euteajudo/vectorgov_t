@@ -15,6 +15,8 @@ trigger:
     - separar fatos de fundamentação
 agentes_aplicaveis:
   - redator
+fases_aplicaveis:
+  - ANALISE_PRONTA
 modelo_recomendado: gemini-3.5-flash
 versao: 1.0.0
 data_atualizacao: 2026-05-26

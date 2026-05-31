@@ -282,6 +282,17 @@ function gerarMetaMd(metas) {
   return partes.join("\n");
 }
 
+// Estados do FSM conversacional (sincronizar com EstadoConversaSchema no
+// pacote @vectorgov-t/schemas). Skills GLOBAIS (fases_aplicaveis vazio)
+// entram em todas as fases.
+const FASES_FSM = [
+  "AGUARDANDO_DOCUMENTO",
+  "DOCUMENTO_RECEBIDO",
+  "PETICAO_EXTRAIDA",
+  "ANALISE_PRONTA",
+  "PARECER_GERADO",
+];
+
 function gerarMetaJson(metas) {
   const grupos = {};
   for (const m of metas) {
@@ -289,6 +300,18 @@ function gerarMetaJson(metas) {
     grupos[m.categoria].push(m.nome);
   }
   for (const cat of Object.keys(grupos)) grupos[cat].sort();
+
+  // Agrupamento por fase — mesma lógica do skills-meta-generator.ts.
+  const porFase = {};
+  for (const f of FASES_FSM) porFase[f] = [];
+  for (const m of metas) {
+    const fases =
+      Array.isArray(m.fases_aplicaveis) && m.fases_aplicaveis.length > 0
+        ? m.fases_aplicaveis
+        : FASES_FSM; // vazio = global
+    for (const f of fases) (porFase[f] ??= []).push(m.nome);
+  }
+  for (const f of Object.keys(porFase)) porFase[f].sort();
 
   return {
     versao_formato: "1.0.0",
@@ -304,8 +327,12 @@ function gerarMetaJson(metas) {
         versao: m.versao,
         tokens_aproximados: m.tokens_aproximados,
         agentes_aplicaveis: m.agentes_aplicaveis,
+        fases_aplicaveis: Array.isArray(m.fases_aplicaveis)
+          ? m.fases_aplicaveis
+          : [],
       })),
     por_categoria: grupos,
+    por_fase: porFase,
   };
 }
 

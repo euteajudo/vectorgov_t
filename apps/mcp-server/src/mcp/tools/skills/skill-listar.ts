@@ -58,6 +58,18 @@ const inputSchemaJson = {
       ],
       description: "Filtra skills aplicáveis a um agente específico (opcional).",
     },
+    fase: {
+      type: "string",
+      enum: [
+        "AGUARDANDO_DOCUMENTO",
+        "DOCUMENTO_RECEBIDO",
+        "PETICAO_EXTRAIDA",
+        "ANALISE_PRONTA",
+        "PARECER_GERADO",
+      ],
+      description:
+        "Filtra skills oferecidas numa fase do FSM conversacional (inclui as globais). Use a fase atual da conversa para ver só o que é relevante agora.",
+    },
   },
 } as const;
 
@@ -116,6 +128,14 @@ function aplicarFiltros(
   if (filtros.agente) {
     lista = lista.filter((s) => s.agentes_aplicaveis.includes(filtros.agente!));
   }
+  if (filtros.fase) {
+    // Skills GLOBAIS (fases_aplicaveis vazio) entram em qualquer fase.
+    lista = lista.filter(
+      (s) =>
+        s.fases_aplicaveis.length === 0 ||
+        s.fases_aplicaveis.includes(filtros.fase!),
+    );
+  }
   return lista;
 }
 
@@ -145,7 +165,7 @@ async function handler(
 registerTool({
   name: "skill_listar",
   description:
-    "Lista as skills ativas no R2 com possibilidade de filtro por categoria ou agente. Lê o _meta.json (cache KV 5min, fallback para R2).",
+    "Lista as skills ativas no R2 com filtro opcional por categoria, agente ou fase do FSM. Lê o _meta.json (cache KV 5min, fallback para R2).",
   inputSchema: inputSchemaJson,
   zodSchema: SkillListarInput,
   handler,

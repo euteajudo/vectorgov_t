@@ -20,6 +20,9 @@ agentes_aplicaveis:
   - orquestrador
   - analista-juridico
   - pesquisador
+fases_aplicaveis:
+  - DOCUMENTO_RECEBIDO
+  - PETICAO_EXTRAIDA
 modelo_recomendado: gemini-3.5-flash
 versao: 1.0.0
 data_atualizacao: 2026-05-26

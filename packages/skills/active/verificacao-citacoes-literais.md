@@ -17,6 +17,8 @@ trigger:
     - prevenção de alucinação em outputs LLM
 agentes_aplicaveis:
   - auditor
+fases_aplicaveis:
+  - ANALISE_PRONTA
 modelo_recomendado: gemini-3-pro
 versao: 1.0.0
 data_atualizacao: 2026-05-26

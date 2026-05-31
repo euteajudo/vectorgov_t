@@ -610,6 +610,31 @@ export interface ConversarOpts {
   veredito?: string | null;
 }
 
+/**
+ * Carrega, ao vivo, as skills oferecidas na fase atual (push do FSM).
+ *
+ * Reusa a tool `skill_listar` (cache KV 5min + fallback R2) com o filtro
+ * `fase` — assim a lista reflete CRUD em tempo real e as skills GLOBAIS
+ * (sem fase) entram em qualquer fase. Best-effort: qualquer falha devolve
+ * lista vazia (o bloco de estado simplesmente não injeta skills).
+ */
+async function carregarSkillsDaFase(
+  env: Env,
+  estado: EstadoConversa,
+): Promise<Array<{ nome: string; descricao: string }>> {
+  try {
+    const out = (await invokeSkillTool(env, "skill_listar", {
+      fase: estado,
+    })) as { skills?: Array<{ nome: string; descricao: string }> };
+    return (out.skills ?? []).map((s) => ({
+      nome: s.nome,
+      descricao: s.descricao,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export async function conversar(opts: ConversarOpts): Promise<ResultadoConversa> {
   const { env, llm, notebook, userText, onEvent, signal } = opts;
   const modeloEscolhido = opts.modelo ?? "gemini-3.5-flash";
@@ -618,6 +643,10 @@ export async function conversar(opts: ConversarOpts): Promise<ResultadoConversa>
   const historico = await notebook.listarMensagens();
   // Gating por fase: o engine só expõe ao Gemini as tools válidas agora.
   const tools = buildTools(env, llm, notebook, opts.apiKey ?? null, estado);
+  // Skills da fase atual (push): lidas ao vivo do _meta.json via skill_listar.
+  // Refletem CRUD em tempo real — skill nova/atualizada/deletada aparece no
+  // próximo turno. Best-effort: se o índice estiver indisponível, segue sem.
+  const skillsDaFase = await carregarSkillsDaFase(env, estado);
   // O system prompt carrega o bloco [ESTADO DA CONVERSA] determinístico —
   // o backend dizendo ao condutor onde ele está e o que pode fazer.
   const system =
@@ -631,6 +660,7 @@ export async function conversar(opts: ConversarOpts): Promise<ResultadoConversa>
       estado,
       rascunho: opts.rascunho ?? null,
       veredito: opts.veredito ?? null,
+      skillsDaFase,
     });
   const messages = buildMessages(historico, userText);
 

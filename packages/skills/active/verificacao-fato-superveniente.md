@@ -18,6 +18,8 @@ trigger:
 agentes_aplicaveis:
   - analista-juridico
   - especialista-reequilibrio
+fases_aplicaveis:
+  - PETICAO_EXTRAIDA
 modelo_recomendado: gemini-3.5-flash
 versao: 1.0.0
 data_atualizacao: 2026-05-26
