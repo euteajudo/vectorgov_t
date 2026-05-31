@@ -22,5 +22,10 @@ binding = "DB"
 database_name = "catmat-catser-db"
 database_id = "e361b140-c0c9-4c6b-9aab-b6b4496ef0f9"
 
+# Carrega os .md das skills como texto no bundle (system prompt do assistente).
+[[rules]]
+type = "Text"
+globs = ["**/*.md"]
+
 [observability]
 enabled = true

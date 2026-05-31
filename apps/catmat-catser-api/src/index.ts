@@ -15,12 +15,13 @@ import {
   buscarCatalogoHibrido,
   grepCatalogo,
 } from "./lib/catalogo-search.js";
+import { conversarCatalogo, type ChatMensagem } from "./lib/chat-engine.js";
 
 function corsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, X-Google-API-Key",
     "Access-Control-Max-Age": "86400",
   };
 }
@@ -62,6 +63,28 @@ async function buscar(request: Request, env: Env): Promise<Response> {
   }
 }
 
+async function chat(request: Request, env: Env): Promise<Response> {
+  const apiKey = request.headers.get("X-Google-API-Key")?.trim();
+  if (!apiKey) {
+    return json({ error: "header X-Google-API-Key obrigatório" }, 401);
+  }
+  let body: { messages?: ChatMensagem[] };
+  try {
+    body = (await request.json()) as { messages?: ChatMensagem[] };
+  } catch {
+    return json({ error: "corpo JSON inválido" }, 400);
+  }
+  if (!Array.isArray(body.messages) || body.messages.length === 0) {
+    return json({ error: "messages (array) obrigatório" }, 400);
+  }
+  try {
+    return json(await conversarCatalogo(env, apiKey, body.messages));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "erro no chat";
+    return json({ error: `chat falhou: ${msg}` }, 500);
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -73,6 +96,9 @@ export default {
     }
     if (request.method === "GET" && url.pathname === "/api/catalogo/buscar") {
       return buscar(request, env);
+    }
+    if (request.method === "POST" && url.pathname === "/api/catalogo/chat") {
+      return chat(request, env);
     }
     return json({ error: "rota não encontrada" }, 404);
   },
