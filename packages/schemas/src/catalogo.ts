@@ -34,7 +34,7 @@ export type ItemCatalogo = z.infer<typeof ItemCatalogoSchema>;
 
 /** Resultado de uma busca no catálogo (semântica ou grep). */
 export const CatalogoBuscaResultadoSchema = z.object({
-  modo: z.enum(["semantico", "grep"]),
+  modo: z.enum(["semantico", "grep", "fuzzy"]),
   total: z.number().int().nonnegative(),
   itens: z.array(ItemCatalogoSchema),
 });
