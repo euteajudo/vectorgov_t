@@ -1,5 +1,5 @@
 /**
- * Cliente HTTP da configuração (modelos + teste de chave).
+ * Cliente HTTP da configuração (modelo por função).
  */
 
 const BASE =
@@ -65,19 +65,3 @@ export async function setModelConfig(
   return (await res.json()) as ModelConfig;
 }
 
-export interface TesteChaveResult {
-  ok: boolean;
-  message?: string;
-}
-
-export async function testarChave(apiKey: string): Promise<TesteChaveResult> {
-  const res = await fetch(`${BASE}/api/config/test-key`, {
-    method: "POST",
-    headers: { "X-Google-API-Key": apiKey },
-  });
-  try {
-    return (await res.json()) as TesteChaveResult;
-  } catch {
-    return { ok: false, message: `HTTP ${res.status}` };
-  }
-}
