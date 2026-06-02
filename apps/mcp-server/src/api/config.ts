@@ -17,7 +17,6 @@ import {
   FUNCAO_MODELO,
   MODELO_LLM,
 } from "../lib/model-config.js";
-import { extractApiKey } from "../lib/api-key.js";
 import { testarChaveGoogle } from "../agents/llm/google.js";
 
 const ModeloEnum = z.enum(MODELO_LLM);
@@ -69,16 +68,19 @@ export async function handlePutModelos(
 }
 
 export async function handleTestKey(
-  request: Request,
-  _env: Env,
+  _request: Request,
+  env: Env,
 ): Promise<Response> {
-  const apiKey = extractApiKey(request);
-  if (!apiKey) {
+  // Antes testava a chave do usuário (header). Agora a chave do Gemini vive em
+  // BYOK no AI Gateway — então testamos a conectividade do gateway com o
+  // `CF_AIG_TOKEN` do Worker (uma chamada mínima ao Gemini).
+  const token = env.CF_AIG_TOKEN ?? null;
+  if (!token) {
     return jsonResponse(
-      { ok: false, message: "Header X-Google-API-Key ausente" },
-      400,
+      { ok: false, message: "AI Gateway não configurado (CF_AIG_TOKEN ausente)" },
+      503,
     );
   }
-  const result = await testarChaveGoogle(apiKey);
+  const result = await testarChaveGoogle(token);
   return jsonResponse(result, result.ok ? 200 : 400);
 }

@@ -345,7 +345,7 @@ export function buildTools(
       const i = input as { correcoes?: Partial<PeticaoRascunho> };
       if (!apiKey) {
         return {
-          erro: "Configure a chave Google (API key) no navegador para rodar a análise.",
+          erro: "AI Gateway não configurado (CF_AIG_TOKEN) — análise indisponível.",
         };
       }
       const rascunho = await notebook.lerRascunho();
@@ -470,7 +470,7 @@ export function buildTools(
     inputSchema: GerarParecerInputSchema,
     execute: async () => {
       if (!apiKey) {
-        return { erro: "Configure a chave Google (API key) para gerar o parecer." };
+        return { erro: "AI Gateway não configurado (CF_AIG_TOKEN) — parecer indisponível." };
       }
       const link = await notebook.lerAnaliseId();
       if (!link) {
