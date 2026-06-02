@@ -63,3 +63,6 @@ temp/
 # Test PDFs locais (não versionar PDFs)
 *.pdf
 !test/golden-set/*.pdf
+
+# Prints/rascunhos locais de investigação (não versionar)
+imagens/
