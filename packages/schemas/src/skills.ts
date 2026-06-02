@@ -21,6 +21,17 @@
  */
 
 import { z } from "zod";
+import { EstadoConversaSchema } from "./notebook.js";
+
+/**
+ * Fase do FSM conversacional em que uma skill é relevante.
+ *
+ * Reusa `EstadoConversaSchema` (definido em `notebook.ts`) — os estados do
+ * trilho determinístico são a ÚNICA fonte de verdade. Assim, skill ↔ fase
+ * fica sempre alinhada com `agents/conversational/fsm.ts`.
+ */
+export const SkillFase = EstadoConversaSchema;
+export type SkillFase = z.infer<typeof SkillFase>;
 
 /**
  * Categorias canônicas de skills. Alinhar com as features ativas do produto.
@@ -94,6 +105,18 @@ export const SkillMetadata = z.object({
   descricao: z.string().min(20).max(400),
   trigger: SkillTrigger,
   agentes_aplicaveis: z.array(AgenteIdentificador).min(1),
+  /**
+   * Fases do FSM conversacional em que a skill é oferecida ao condutor
+   * (Gemini). Liga a skill ao trilho determinístico — o engine injeta as
+   * skills da fase no bloco [ESTADO DA CONVERSA] (push) e o `skill_listar`
+   * filtra por ela (pull).
+   *
+   * Semântica do VAZIO: lista vazia = skill GLOBAL — oferecida em TODAS as
+   * fases do funil e sempre visível no pull. Assim, criar uma skill sem
+   * declarar fase nunca produz algo "órfão"; declarar fases é um refinamento
+   * para reduzir ruído. A função primária da skill vem de `agentes_aplicaveis`.
+   */
+  fases_aplicaveis: z.array(SkillFase).default([]),
   modelo_recomendado: ModeloRecomendado,
   versao: z.string().regex(/^\d+\.\d+\.\d+$/, "versão deve ser SemVer"),
   data_atualizacao: z
@@ -117,6 +140,10 @@ export const SkillListItem = z.object({
   versao: z.string(),
   tokens_aproximados: z.number().int().positive(),
   agentes_aplicaveis: z.array(AgenteIdentificador),
+  // Fases do FSM em que a skill é relevante — carregado no índice para a
+  // injeção por fase (push) e o filtro `fase` do `skill_listar` (pull).
+  // Vazio = global (oferecida em todas as fases). Ver SkillMetadata.
+  fases_aplicaveis: z.array(SkillFase).default([]),
 });
 export type SkillListItem = z.infer<typeof SkillListItem>;
 
@@ -150,6 +177,13 @@ export const MetaIndex = z.object({
   total_skills: z.number().int().nonnegative(),
   skills: z.array(SkillListItem),
   por_categoria: z.record(z.string(), z.array(z.string())),
+  /**
+   * Skills agrupadas por fase do FSM. Chave = estado (`EstadoConversa`),
+   * valor = nomes das skills cuja `fases_aplicaveis` inclui aquela fase.
+   * Skills GLOBAIS (fases_aplicaveis vazio) entram em TODAS as chaves.
+   * É o que alimenta a injeção por fase (push) no bloco [ESTADO DA CONVERSA].
+   */
+  por_fase: z.record(z.string(), z.array(z.string())),
 });
 export type MetaIndex = z.infer<typeof MetaIndex>;
 
@@ -167,6 +201,9 @@ export const SkillListarInput = z
   .object({
     categoria: SkillCategoria.optional(),
     agente: AgenteIdentificador.optional(),
+    // Filtra skills oferecidas numa fase do FSM (inclui as globais). É o
+    // "pull" escopado por estado usado pelo condutor conversacional.
+    fase: SkillFase.optional(),
   })
   .strict();
 export type SkillListarInput = z.infer<typeof SkillListarInput>;
@@ -259,6 +296,7 @@ export type SkillPublicarOutput = z.infer<typeof SkillPublicarOutput>;
  */
 export const SKILL_R2_PREFIX_ACTIVE = "active/";
 export const SKILL_R2_PREFIX_CANDIDATE = "candidate/";
+export const SKILL_R2_PREFIX_ARCHIVE = "archive/";
 export const SKILL_R2_KEY_META_MD = "_meta.md";
 export const SKILL_R2_KEY_META_JSON = "_meta.json";
 

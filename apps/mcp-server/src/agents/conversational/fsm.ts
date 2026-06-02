@@ -97,6 +97,12 @@ export interface BlocoEstadoCtx {
   estado: EstadoConversa;
   rascunho: PeticaoRascunho | null;
   veredito: string | null;
+  /**
+   * Skills oferecidas NESTA fase (push). Lidas ao vivo do `_meta.json` pelo
+   * engine — refletem CRUD em tempo real (skill nova/atualizada/deletada).
+   * Vazio/ausente → nenhuma seção de skills é injetada.
+   */
+  skillsDaFase?: Array<{ nome: string; descricao: string }>;
 }
 
 /**
@@ -144,6 +150,23 @@ export function montarBlocoEstado(ctx: BlocoEstadoCtx): string {
     case "PARECER_GERADO":
       linhas.push("Ações permitidas: apresentar o parecer e oferecer abri-lo");
       break;
+  }
+
+  // Skills da fase (push). Determinístico: o backend diz ao condutor quais
+  // instruções carregar AGORA. A lista vem do _meta.json (CRUD ao vivo).
+  if (ctx.skillsDaFase && ctx.skillsDaFase.length > 0) {
+    linhas.push(
+      "",
+      "Skills recomendadas nesta fase (carregue o conteúdo com a tool " +
+        "`skill_carregar(nome)` antes de produzir o entregável da fase):",
+    );
+    for (const s of ctx.skillsDaFase) {
+      linhas.push(`- \`${s.nome}\`: ${s.descricao}`);
+    }
+    linhas.push(
+      "Use `skill_listar({ fase })` para reconsultar a qualquer momento — a " +
+        "lista é dinâmica e pode mudar entre turnos.",
+    );
   }
 
   linhas.push(

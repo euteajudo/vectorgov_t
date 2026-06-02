@@ -5,6 +5,12 @@ compatibility_flags = ["nodejs_compat"]
 
 account_id = "a89dbdb0224cd8d2292cda8a038bc297"
 
+# Gemini vai pelo Cloudflare AI Gateway `vectorgov-t` (endpoint OpenAI-compat),
+# com a chave do Google em BYOK no gateway. O Worker autentica com o secret
+# CF_AIG_TOKEN (NÃO declarado aqui — é secret):
+#   wrangler secret put CF_AIG_TOKEN
+# Override opcional da base: secret/var CF_AIG_BASE_URL (default no código).
+
 [ai]
 binding = "AI"
 

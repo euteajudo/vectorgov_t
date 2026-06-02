@@ -18,7 +18,6 @@
 import type { Env } from "../env.js";
 import { errorResponse, jsonResponse } from "../lib/responses.js";
 import { validatePeticaoId } from "./validation.js";
-import { extractApiKey } from "../lib/api-key.js";
 import { type DecisaoFeature2 } from "../agents/pevs-engine.js";
 import { criarEnginePEVS } from "../agents/run-analise.js";
 import { getSessionAgentClient } from "../agents/session-loader.js";
@@ -525,11 +524,13 @@ export async function handleGerarParecer(
   if (!idCheck.ok) return idCheck.response;
   const id = idCheck.data;
 
-  const apiKey = extractApiKey(request);
+  // Gemini agora vai pelo AI Gateway (BYOK). O usuário não envia chave — o
+  // gating é "gateway configurado?" via `env.CF_AIG_TOKEN`.
+  const apiKey = env.CF_AIG_TOKEN ?? null;
   if (!apiKey) {
     return errorResponse(
-      "Header X-Google-API-Key ausente. Configure em /admin/config.",
-      401,
+      "AI Gateway não configurado (CF_AIG_TOKEN ausente no Worker).",
+      503,
     );
   }
 

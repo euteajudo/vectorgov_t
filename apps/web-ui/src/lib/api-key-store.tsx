@@ -1,15 +1,14 @@
 /**
  * Store da API key do Google no browser.
  *
- * Decisão arquitetural (demo): a key NÃO trafega pro backend pra
- * persistência — fica apenas em `sessionStorage`. Some quando a aba
- * fecha. Em cada request, a UI injeta no header `X-Google-API-Key`
- * (REST) ou no Sec-WebSocket-Protocol `vectorgov-key.<key>` (WS).
- *
- * Por que `sessionStorage` e não `localStorage`:
- *  - Some ao fechar a aba → satisfaz "demo, sem persistência".
- *  - Por origem, sobrevive a reloads e navegação na mesma tab.
- *  - DevTools mostra. Aceitável.
+ * MUDANÇA (AI Gateway): o Gemini agora é acessado via Cloudflare AI Gateway,
+ * com a chave em BYOK no gateway (server-side). O app **não precisa mais** que
+ * o usuário informe a chave. Para não reescrever todos os gates `if (!apiKey)`
+ * de uma vez, o `apiKey` passa a ter um SENTINELA não-nulo por padrão
+ * (`GATEWAY_SENTINEL`): os gates passam, o banner some e o usuário nunca é
+ * solicitado. O valor injetado nos headers/subprotocol é ignorado pelo backend
+ * (que usa o `CF_AIG_TOKEN`). A UI de "informar chave" em /admin/config fica
+ * vestigial — pode ser removida numa limpeza posterior.
  */
 "use client";
 
@@ -23,6 +22,13 @@ import {
 } from "react";
 
 const STORAGE_KEY = "google_api_key";
+
+/**
+ * Valor não-nulo padrão — sinaliza "Gemini via AI Gateway, sem chave do
+ * usuário". Mantém os gates legados (`if (!apiKey)`) satisfeitos. Ignorado pelo
+ * backend.
+ */
+const GATEWAY_SENTINEL = "via-ai-gateway";
 
 interface ApiKeyContextValue {
   apiKey: string | null;
@@ -38,7 +44,8 @@ const Ctx = createContext<ApiKeyContextValue>({
 });
 
 export function ApiKeyProvider({ children }: { children: ReactNode }) {
-  const [apiKey, setApiKeyState] = useState<string | null>(null);
+  // Default = sentinela (não-nulo): com o AI Gateway o app não exige chave.
+  const [apiKey, setApiKeyState] = useState<string | null>(GATEWAY_SENTINEL);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -55,8 +62,10 @@ export function ApiKeyProvider({ children }: { children: ReactNode }) {
       sessionStorage.setItem(STORAGE_KEY, trimmed);
       setApiKeyState(trimmed);
     } else {
+      // "Remover" volta ao sentinela do gateway — nunca deixa nulo (senão o
+      // banner/gates legados voltariam a pedir chave sem necessidade).
       sessionStorage.removeItem(STORAGE_KEY);
-      setApiKeyState(null);
+      setApiKeyState(GATEWAY_SENTINEL);
     }
   }, []);
 

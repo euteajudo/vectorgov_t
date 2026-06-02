@@ -32,6 +32,7 @@ const META_FIXTURE: MetaIndex = {
       versao: "1.0.0",
       tokens_aproximados: 800,
       agentes_aplicaveis: ["analista-juridico"],
+      fases_aplicaveis: ["DOCUMENTO_RECEBIDO", "PETICAO_EXTRAIDA"],
     },
     {
       nome: "verificacao-prazo-pedido",
@@ -41,6 +42,7 @@ const META_FIXTURE: MetaIndex = {
       versao: "1.0.0",
       tokens_aproximados: 500,
       agentes_aplicaveis: ["analista-juridico", "orquestrador"],
+      fases_aplicaveis: ["PETICAO_EXTRAIDA"],
     },
     {
       nome: "redacao-conclusao-recomendacoes",
@@ -49,11 +51,19 @@ const META_FIXTURE: MetaIndex = {
       versao: "1.0.0",
       tokens_aproximados: 1200,
       agentes_aplicaveis: ["redator"],
+      fases_aplicaveis: ["ANALISE_PRONTA"],
     },
   ],
   por_categoria: {
     "analise-peticao": ["extracao-estruturada-peticao", "verificacao-prazo-pedido"],
     "geracao-parecer": ["redacao-conclusao-recomendacoes"],
+  },
+  por_fase: {
+    AGUARDANDO_DOCUMENTO: [],
+    DOCUMENTO_RECEBIDO: ["extracao-estruturada-peticao"],
+    PETICAO_EXTRAIDA: ["extracao-estruturada-peticao", "verificacao-prazo-pedido"],
+    ANALISE_PRONTA: ["redacao-conclusao-recomendacoes"],
+    PARECER_GERADO: [],
   },
 };
 

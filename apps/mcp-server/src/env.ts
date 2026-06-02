@@ -16,7 +16,7 @@
  * - `R2_SKILLS`: bucket com as skills em markdown que orientam os agentes.
  * - `DB`: D1 com FTS5 (BM25) + metadados relacionais.
  * - `CACHE`: KV usado para rate-limit e cache de respostas curtas.
- * - Secrets (`GOOGLE_API_KEY`, `INGESTION_API_SECRET`) chegam por
+ * - Secrets (`CF_AIG_TOKEN`, `INGESTION_API_SECRET`) chegam por
  *   `wrangler secret put` — opcionais para os testes locais.
  */
 export interface Env {
@@ -58,7 +58,13 @@ export interface Env {
   SESSION_AGENT: DurableObjectNamespace;
 
   // Secrets (não bindings)
-  GOOGLE_API_KEY?: string;
+  // Token do Cloudflare AI Gateway (`vectorgov-t`). Autentica no gateway via
+  // header `cf-aig-authorization`; a chave do Gemini fica em BYOK/Stored Keys
+  // no gateway, não no Worker. `wrangler secret put CF_AIG_TOKEN`.
+  CF_AIG_TOKEN?: string;
+  // Override opcional da base do endpoint compat do gateway (default no código:
+  // `.../vectorgov-t/compat`). Útil para apontar a outro gateway/conta.
+  CF_AIG_BASE_URL?: string;
   INGESTION_API_SECRET?: string;
   ENABLE_GOLDEN_SET_MOCKS?: string;
 

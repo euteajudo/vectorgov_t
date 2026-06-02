@@ -26,6 +26,7 @@ import type { Env } from "../env.js";
 import {
   MetaIndex,
   SkillCategoria,
+  SkillFase,
   SkillMetadata,
   SkillListItem,
   SKILL_R2_PREFIX_ACTIVE,
@@ -120,7 +121,29 @@ function toListItem(meta: SkillMetadata): SkillListItem {
     versao: meta.versao,
     tokens_aproximados: meta.tokens_aproximados,
     agentes_aplicaveis: meta.agentes_aplicaveis,
+    fases_aplicaveis: meta.fases_aplicaveis,
   };
+}
+
+/**
+ * Agrupa skills por fase do FSM. Cada fase recebe os nomes das skills cuja
+ * `fases_aplicaveis` a inclui. Skills GLOBAIS (lista vazia) entram em TODAS
+ * as fases — coerente com a semântica "vazio = global".
+ *
+ * Saída determinística (nomes ordenados) → diff estável do `_meta.json`.
+ */
+function agruparPorFase(skills: SkillMetadata[]): Record<string, string[]> {
+  const fases = SkillFase.options;
+  const grupos: Record<string, string[]> = {};
+  for (const fase of fases) grupos[fase] = [];
+  for (const s of skills) {
+    const alvo = s.fases_aplicaveis.length === 0 ? fases : s.fases_aplicaveis;
+    for (const f of alvo) {
+      (grupos[f] ??= []).push(s.nome);
+    }
+  }
+  for (const f of Object.keys(grupos)) grupos[f].sort();
+  return grupos;
 }
 
 /**
@@ -254,6 +277,7 @@ export async function regenerarMeta(env: Env): Promise<RegenerarMetaResult> {
     total_skills: validas.length,
     skills: validas.map(toListItem),
     por_categoria: agruparPorCategoria(validas),
+    por_fase: agruparPorFase(validas),
   });
 
   const metaMd = gerarMetaMarkdown(validas);

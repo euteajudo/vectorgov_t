@@ -56,7 +56,7 @@ import {
   type Parecer,
 } from "@vectorgov-t/schemas";
 import { PEVSEngine } from "./pevs-engine.js";
-import { GoogleLLMClient } from "./llm/google.js";
+import { criarGoogleLLM } from "./llm/google.js";
 import { getModelConfig } from "../lib/model-config.js";
 import { buildToolsForPEVS } from "./tools-adapter.js";
 
@@ -571,9 +571,11 @@ export class SessionAgent {
   private async processarJob(
     recordId: string,
     peticao: Peticao,
-    apiKey: string,
+    _gate: string,
   ): Promise<void> {
-    const llm = new GoogleLLMClient(apiKey);
+    // Token real do gateway vem do env do DO; `_gate` é só o sentinela vindo
+    // do enqueue (mantido por compat com a linha do job).
+    const llm = criarGoogleLLM(this.env);
     const cfg = await getModelConfig(this.env);
     const tools = buildToolsForPEVS(this.env);
     const engine = new PEVSEngine({

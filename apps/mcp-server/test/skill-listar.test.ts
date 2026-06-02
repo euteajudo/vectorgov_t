@@ -34,6 +34,7 @@ const META_FIXTURE: MetaIndex = {
       versao: "1.0.0",
       tokens_aproximados: 500,
       agentes_aplicaveis: ["analista-juridico", "orquestrador"],
+      fases_aplicaveis: ["PETICAO_EXTRAIDA"],
     },
     {
       nome: "skill-parec",
@@ -42,6 +43,7 @@ const META_FIXTURE: MetaIndex = {
       versao: "1.0.0",
       tokens_aproximados: 700,
       agentes_aplicaveis: ["redator"],
+      fases_aplicaveis: ["ANALISE_PRONTA"],
     },
     {
       nome: "skill-calc",
@@ -50,12 +52,20 @@ const META_FIXTURE: MetaIndex = {
       versao: "1.0.0",
       tokens_aproximados: 600,
       agentes_aplicaveis: ["calculista"],
+      fases_aplicaveis: [],
     },
   ],
   por_categoria: {
     "analise-peticao": ["skill-petic"],
     "geracao-parecer": ["skill-parec"],
     "calculo-tributario": ["skill-calc"],
+  },
+  por_fase: {
+    AGUARDANDO_DOCUMENTO: ["skill-calc"],
+    DOCUMENTO_RECEBIDO: ["skill-calc"],
+    PETICAO_EXTRAIDA: ["skill-calc", "skill-petic"],
+    ANALISE_PRONTA: ["skill-calc", "skill-parec"],
+    PARECER_GERADO: ["skill-calc"],
   },
 };
 

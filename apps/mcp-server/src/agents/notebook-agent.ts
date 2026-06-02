@@ -44,14 +44,11 @@ import {
   type EstadoConversa,
 } from "@vectorgov-t/schemas";
 import { embedBatch } from "../lib/batch-embedding.js";
-import { GoogleLLMClient } from "./llm/google.js";
+import { criarGoogleLLM } from "./llm/google.js";
 import { conversar } from "./conversational/engine.js";
 import { derivarEstado } from "./conversational/fsm.js";
 import { getSessionAgentClient } from "./session-loader.js";
-import {
-  extractApiKeyFromWS,
-  findKeySubprotocol,
-} from "../lib/api-key.js";
+import { findKeySubprotocol } from "../lib/api-key.js";
 import { getModelConfig } from "../lib/model-config.js";
 
 // v3: adiciona a tabela notebook_analise (link notebook→análise p/ a FSM).
@@ -731,7 +728,7 @@ export class NotebookAgent {
       sendEvent({
         type: "error",
         message:
-          "API key ausente — configure em /admin/config e reabra o chat.",
+          "AI Gateway não configurado (CF_AIG_TOKEN ausente no Worker).",
       });
       return;
     }
@@ -751,7 +748,7 @@ export class NotebookAgent {
     });
 
     try {
-      const llm = new GoogleLLMClient(apiKey);
+      const llm = criarGoogleLLM(this.env);
       const cfg = await getModelConfig(this.env);
       // Deriva a fase ANTES de chamar o engine: o backend dita ao Gemini
       // onde ele está e quais tools de transição ele pode ver.
@@ -807,10 +804,12 @@ export class NotebookAgent {
     ) {
       await this.garantirSchema();
 
-      // A key chega pelo subprotocol `vectorgov-key.<key>`. O servidor
-      // PRECISA ecoar o mesmo subprotocol na resposta 101 — senão o
-      // browser rejeita a conexão.
-      const apiKey = extractApiKeyFromWS(request);
+      // Gemini agora vai pelo AI Gateway (BYOK) — o browser não envia mais a
+      // chave. O gating é "gateway configurado?" via `env.CF_AIG_TOKEN`. Se o
+      // cliente (legado) ainda mandar um subprotocol `vectorgov-key.*`, o
+      // servidor o ecoa na resposta 101 (senão o browser rejeita a conexão);
+      // o valor é ignorado.
+      const apiKey = this.env.CF_AIG_TOKEN ?? null;
       const echoProtocol = findKeySubprotocol(request);
 
       const pair = new WebSocketPair();

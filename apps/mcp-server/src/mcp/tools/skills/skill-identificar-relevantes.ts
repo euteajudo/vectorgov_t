@@ -19,7 +19,7 @@
  */
 
 import { generateObject } from "ai";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { criarProviderGateway } from "../../../agents/llm/google.js";
 import { z } from "zod";
 import {
   MetaIndex,
@@ -196,7 +196,7 @@ function fallbackHeuristico(
   return SkillIdentificarRelevantesOutput.parse({
     recomendadas,
     raciocinio:
-      "Heurística por palavras-chave (LLM indisponível ou GOOGLE_API_KEY ausente).",
+      "Heurística por palavras-chave (LLM indisponível ou CF_AIG_TOKEN ausente).",
   });
 }
 
@@ -208,12 +208,12 @@ async function chamarLlm(
   candidatas: SkillListItem[],
   input: SkillIdentificarRelevantesInput,
 ): Promise<SkillIdentificarRelevantesOutput> {
-  if (!env.GOOGLE_API_KEY) {
+  if (!env.CF_AIG_TOKEN) {
     return fallbackHeuristico(candidatas, input);
   }
 
-  const provider = createGoogleGenerativeAI({ apiKey: env.GOOGLE_API_KEY });
-  const model = provider("gemini-2.5-flash");
+  const provider = criarProviderGateway(env);
+  const model = provider("google-ai-studio/gemini-2.5-flash");
   const { system, prompt } = montarPrompt(candidatas, input);
 
   let resultado;
@@ -278,7 +278,7 @@ async function handler(
 registerTool({
   name: "skill_identificar_relevantes",
   description:
-    "Sugere 1-3 skills relevantes para uma tarefa (Gemini 3.5 Flash). Sem GOOGLE_API_KEY, usa heurística por palavras-chave.",
+    "Sugere 1-3 skills relevantes para uma tarefa (Gemini via AI Gateway). Sem CF_AIG_TOKEN, usa heurística por palavras-chave.",
   inputSchema: inputSchemaJson,
   zodSchema: SkillIdentificarRelevantesInput,
   handler,

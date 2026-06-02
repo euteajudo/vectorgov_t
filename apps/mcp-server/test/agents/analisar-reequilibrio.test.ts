@@ -77,9 +77,9 @@ beforeEach(() => {
 });
 
 describe("tool analisar_reequilibrio", () => {
-  it("erro quando falta a apiKey", async () => {
+  it("erro quando o gateway não está configurado (sem credencial)", async () => {
     const r = (await tool(rascunhoValido, null).execute({})) as { erro?: string };
-    expect(r.erro).toMatch(/chave|api key/i);
+    expect(r.erro).toMatch(/gateway|CF_AIG_TOKEN/i);
     expect(rodarAnaliseMock).not.toHaveBeenCalled();
   });
 

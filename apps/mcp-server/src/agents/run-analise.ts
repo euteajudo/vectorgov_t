@@ -5,7 +5,7 @@
  * + engine em vários lugares.
  */
 import type { Env } from "../env.js";
-import { GoogleLLMClient } from "./llm/google.js";
+import { criarGoogleLLM } from "./llm/google.js";
 import { PEVSEngine, type PEVSConfig } from "./pevs-engine.js";
 import { buildToolsForPEVS } from "./tools-adapter.js";
 import { getSessionAgentClient } from "./session-loader.js";
@@ -17,17 +17,20 @@ export type OnFase = PEVSConfig["onFase"];
 
 /**
  * Constrói um PEVSEngine pronto para uso, com as dependências reais de
- * produção (LLM Google com a apiKey do request, catálogo de tools via
- * buildToolsForPEVS — que inclui buscar_legislacao e
+ * produção (LLM Google via AI Gateway / `env.CF_AIG_TOKEN`, catálogo de tools
+ * via buildToolsForPEVS — que inclui buscar_legislacao e
  * calcular_reequilibrio_tributario — config de modelos do KV e o
  * SessionAgent para persistência).
+ *
+ * `_gate` é o sentinela de disponibilidade (o caller só chega aqui se o
+ * gateway está configurado); o token real vem de `env.CF_AIG_TOKEN`.
  */
 export async function criarEnginePEVS(
   env: Env,
-  apiKey: string,
+  _gate: string,
   opts: { onFase?: OnFase } = {},
 ): Promise<PEVSEngine> {
-  const llm = new GoogleLLMClient(apiKey);
+  const llm = criarGoogleLLM(env);
   const cfg = await getModelConfig(env);
   const tools = buildToolsForPEVS(env);
   const sessionAgent = getSessionAgentClient(env);
