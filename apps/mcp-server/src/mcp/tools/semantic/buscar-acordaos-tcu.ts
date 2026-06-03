@@ -25,12 +25,11 @@ const BuscarAcordaosTcuInput = z.object({
         .enum(["plenario", "primeira_camara", "segunda_camara"])
         .optional(),
       ano: z.number().int().optional(),
-      // Seções realmente presentes no índice acordaos-tcu (verificado via
-      // list-metadata-index + ingestão). NÃO incluir valores ausentes: o filtro
-      // por seção inexistente devolveria [] silenciosamente.
-      secao: z
-        .enum(["sumario", "relatorio", "voto", "acordao", "enunciado"])
-        .optional(),
+      // Só seções presentes no índice SEMÂNTICO (Vectorize). O ingestor
+      // (routeChunk no vectorgov-a-mcp) roteia `relatorio` e `cabecalho` para
+      // FTS5/D1 apenas (vectorize=false) — filtrar por eles aqui devolveria []
+      // silenciosamente. Relatório/termos exatos: usar a busca lexical (FTS5).
+      secao: z.enum(["sumario", "voto", "acordao", "enunciado"]).optional(),
     })
     .optional(),
 });
@@ -84,8 +83,9 @@ export const buscarAcordaosTcuTool: ToolDescriptor = {
     "índice acordaos-tcu + rerank cross-encoder. Use para fundamentar a análise " +
     "de reequilíbrio com precedentes do TCU. Devolve trechos com citação canônica " +
     "(label: 'Acórdão N/ano-TCU-Colegiado, seção'). Cite SEMPRE pelo label " +
-    "retornado — nunca invente número de acórdão. Filtros opcionais: colegiado, " +
-    "ano, seção.",
+    "retornado — nunca invente número de acórdão. Cobre as seções de tese " +
+    "(sumário, voto, acórdão, enunciado); o relatório (recitação fática) fica " +
+    "fora do índice semântico. Filtros opcionais: colegiado, ano, seção.",
   inputSchema: zodToMcpSchema(BuscarAcordaosTcuInput),
   handler,
 };
