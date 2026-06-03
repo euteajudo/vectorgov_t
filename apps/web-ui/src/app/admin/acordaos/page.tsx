@@ -1,22 +1,22 @@
 /**
  * `/admin/acordaos` — Ingestão de Acórdãos do TCU.
  *
- * Reconstruído a partir do bundle deployado (o source original foi feito em
- * outra máquina e nunca chegou a este repo). Fluxo:
- *  1. Usuário cola o segredo de ingestão (salvo no browser).
- *  2. Escolhe um arquivo Markdown + número/ano/colegiado.
- *  3. Submit → `POST /ingestao/iniciar` no Worker `vectorgov-a-mcp`.
- *  4. Página faz polling de `GET /ingestao/status/:id` e mostra as fases.
+ * Igual à interface de ingestão de leis: upload de **PDF**, **sem segredo**.
+ * Fluxo:
+ *  1. Usuário escolhe um PDF + número/ano/colegiado.
+ *  2. Submit → `POST /ingestao/iniciar` no Worker `vectorgov-a-mcp`.
+ *  3. Página faz polling de `GET /ingestao/status/:id` e mostra as fases.
+ *
+ * NOTA: o backend `vectorgov-a-mcp` (fora deste repo) precisa aceitar PDF para
+ * o fluxo funcionar de ponta a ponta — validar com um upload real.
  */
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent, type JSX } from "react";
-import { FileText, ShieldCheck, UploadCloud } from "lucide-react";
+import { UploadCloud } from "lucide-react";
+import { UploadDropzone } from "../../../components/ingestao/UploadDropzone";
 import {
   COLEGIADOS,
-  EXTENSOES_ACEITAS,
-  getSegredo,
-  setSegredo,
   iniciarIngestaoAcordao,
   getStatusAcordao,
   type AcordaoStatus,
@@ -43,24 +43,13 @@ const FASE_LABEL: Record<string, string> = {
   failed: "Falhou",
 };
 
-function temExtensaoMarkdown(nome: string): boolean {
-  const lower = nome.toLowerCase();
-  return EXTENSOES_ACEITAS.some((ext) => lower.endsWith(ext));
-}
-
 export default function AcordaosPage(): JSX.Element {
-  const [segredo, setSegredoState] = useState("");
   const [form, setForm] = useState<FormState>(ESTADO_INICIAL);
   const [file, setFile] = useState<File | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [status, setStatus] = useState<AcordaoStatus | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // Carrega o segredo salvo no browser no primeiro mount.
-  useEffect(() => {
-    setSegredoState(getSegredo());
-  }, []);
 
   // Limpa o polling ao desmontar.
   useEffect(() => {
@@ -97,12 +86,8 @@ export default function AcordaosPage(): JSX.Element {
     setErro(null);
     setStatus(null);
 
-    if (!segredo.trim()) {
-      setErro("Informe o segredo de ingestão.");
-      return;
-    }
-    if (!file || !temExtensaoMarkdown(file.name)) {
-      setErro("Selecione um arquivo Markdown (.md).");
+    if (!file) {
+      setErro("Selecione um PDF antes de enviar.");
       return;
     }
     const ano = Number.parseInt(form.ano, 10);
@@ -111,14 +96,13 @@ export default function AcordaosPage(): JSX.Element {
       return;
     }
 
-    setSegredo(segredo); // persiste no browser
     setEnviando(true);
     try {
-      const id = await iniciarIngestaoAcordao(
-        file,
-        { numero: form.numero.trim(), ano, colegiado: form.colegiado },
-        segredo,
-      );
+      const id = await iniciarIngestaoAcordao(file, {
+        numero: form.numero.trim(),
+        ano,
+        colegiado: form.colegiado,
+      });
       setStatus({ fase: "recebido", progresso_pct: 0 });
       iniciarPolling(id);
     } catch (err) {
@@ -139,9 +123,8 @@ export default function AcordaosPage(): JSX.Element {
           Ingestão de Acórdãos do TCU
         </h1>
         <p className="text-sm text-gray-500">
-          Envie o acórdão em Markdown. O pipeline lê o arquivo e estrutura o
-          acórdão, item a item, no repositório que alimenta a análise de
-          reequilíbrio.
+          Envie o acórdão em PDF. O pipeline lê o arquivo e estrutura o acórdão,
+          item a item, no repositório que alimenta a análise de reequilíbrio.
         </p>
       </div>
 
@@ -155,51 +138,20 @@ export default function AcordaosPage(): JSX.Element {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Segredo de ingestão */}
-        <section className="rounded-lg border border-gray-200 bg-white p-4 space-y-2">
-          <label
-            htmlFor="segredo"
-            className="flex items-center gap-2 text-sm font-medium text-gray-700"
-          >
-            <ShieldCheck className="h-4 w-4 text-blue-600" />
-            Segredo de ingestão
-          </label>
-          <input
-            id="segredo"
-            type="password"
-            value={segredo}
-            onChange={(e) => setSegredoState(e.target.value)}
-            placeholder="Cole aqui o segredo (salvo neste navegador)"
-            autoComplete="off"
-            className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-        </section>
-
-        {/* Arquivo Markdown */}
+        {/* Arquivo PDF */}
         <section>
-          <label
-            htmlFor="arquivo"
-            className="mb-1 flex items-center gap-2 text-sm font-medium text-gray-700"
-          >
-            <FileText className="h-4 w-4" />
-            Arquivo Markdown
+          <label className="mb-2 block text-sm font-medium text-gray-700">
+            Arquivo PDF
           </label>
-          <input
-            id="arquivo"
-            type="file"
-            accept=".md,.markdown,.txt,text/markdown,text/plain"
-            onChange={(e) => {
-              setFile(e.target.files?.[0] ?? null);
+          <UploadDropzone
+            file={file}
+            onFile={(f) => {
+              setFile(f);
               setErro(null);
             }}
+            onError={(msg) => setErro(msg)}
             disabled={enviando}
-            className="block w-full text-sm text-gray-700 file:mr-3 file:rounded file:border-0 file:bg-blue-50 file:px-3 file:py-2 file:text-sm file:font-medium file:text-blue-700 hover:file:bg-blue-100"
           />
-          {file && (
-            <p className="mt-1 text-xs text-gray-500">
-              Enviado como Markdown: <span className="font-mono">{file.name}</span>
-            </p>
-          )}
         </section>
 
         {/* Metadata */}

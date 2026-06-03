@@ -1,31 +1,29 @@
 /**
  * Cliente HTTP do módulo de Acórdãos do TCU.
  *
- * Reconstruído a partir do bundle deployado (`vectorgov-a-mcp`) — o source
- * original foi feito em outra máquina e nunca chegou a este repo. Mesmo padrão
- * de ingestão das leis (`/ingestao/iniciar` + `/ingestao/status/:id`), porém:
- *  - aponta para o Worker dedicado de acórdãos (`vectorgov-a-mcp`);
- *  - sobe um arquivo **Markdown** (não PDF);
- *  - autentica com um segredo no header `Authorization: Bearer <segredo>`
- *    (guardado no browser, em `localStorage["vga_ingestion_secret"]`).
+ * Reconstruído a partir do bundle deployado (`vectorgov-a-mcp`). Mesmo padrão
+ * de ingestão das leis (`/ingestao/iniciar` + `/ingestao/status/:id`), e — por
+ * decisão do produto — **igual à interface de leis**: upload de **PDF** e
+ * **sem segredo** (sem header de autenticação no browser).
+ *
+ * NOTA: o Worker `vectorgov-a-mcp` é mantido fora deste repo. Para o upload de
+ * PDF funcionar de ponta a ponta, o backend precisa aceitar PDF (o pipeline
+ * original lia Markdown). O frontend já está no formato final; a compatibilidade
+ * do backend deve ser validada com um upload real.
  */
 "use client";
 
 /**
  * Base do Worker de acórdãos. Hardcoded (como no bundle original) — não vem de
- * `NEXT_PUBLIC_*` para não depender do ambiente de build. Override por env, se
- * algum dia o Worker mudar de host.
+ * `NEXT_PUBLIC_*` para não depender do ambiente de build. Override por env.
  */
 const BASE =
   (typeof process !== "undefined" &&
     process.env.NEXT_PUBLIC_ACORDAOS_BASE_URL) ||
   "https://vectorgov-a-mcp.souzat19.workers.dev";
 
-/** Chave do segredo de ingestão no browser. */
-export const SECRET_STORAGE_KEY = "vga_ingestion_secret";
-
-/** Formato fixo enviado ao backend (arquivo é sempre Markdown). */
-const FORMATO = "md";
+/** Formato enviado ao backend (arquivo é PDF, como nas leis). */
+const FORMATO = "pdf";
 
 /** Colegiados do TCU aceitos pelo backend. */
 export const COLEGIADOS = [
@@ -33,9 +31,6 @@ export const COLEGIADOS = [
   { value: "primeira_camara", label: "Primeira Câmara" },
   { value: "segunda_camara", label: "Segunda Câmara" },
 ] as const;
-
-/** Extensões aceitas para o arquivo de acórdão (todas tratadas como Markdown). */
-export const EXTENSOES_ACEITAS = [".md", ".markdown", ".txt"];
 
 export interface AcordaoMeta {
   numero: string;
@@ -52,28 +47,14 @@ export interface AcordaoStatus {
   mensagem?: string;
 }
 
-/** Lê o segredo salvo no browser. */
-export function getSegredo(): string {
-  if (typeof window === "undefined") return "";
-  return window.localStorage.getItem(SECRET_STORAGE_KEY) ?? "";
-}
-
-/** Salva (ou limpa) o segredo no browser. */
-export function setSegredo(segredo: string): void {
-  if (typeof window === "undefined") return;
-  const v = segredo.trim();
-  if (v) window.localStorage.setItem(SECRET_STORAGE_KEY, v);
-  else window.localStorage.removeItem(SECRET_STORAGE_KEY);
-}
-
 /**
- * Inicia a ingestão de um acórdão (upload do Markdown + metadata). Retorna o
- * `ingestaoId` para acompanhar o status. Lança erro com mensagem amigável.
+ * Inicia a ingestão de um acórdão (upload do PDF + metadata). Retorna o
+ * `ingestaoId` para acompanhar o status. Sem segredo (igual às leis). Lança
+ * erro com mensagem amigável.
  */
 export async function iniciarIngestaoAcordao(
   arquivo: File,
   meta: AcordaoMeta,
-  segredo: string,
 ): Promise<string> {
   const body = new FormData();
   body.append("arquivo", arquivo, arquivo.name);
@@ -84,7 +65,6 @@ export async function iniciarIngestaoAcordao(
 
   const res = await fetch(`${BASE}/ingestao/iniciar`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${segredo.trim()}` },
     body,
   });
   if (!res.ok) {
