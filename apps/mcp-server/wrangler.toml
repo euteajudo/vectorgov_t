@@ -22,6 +22,13 @@ index_name = "legislacao-tributaria"
 binding = "VECTORIZE_CATMAT"
 index_name = "catmat-catser"
 
+# Índice de acórdãos do TCU (populado pelo worker de ingestão `vectorgov-a-mcp`).
+# Consultado pela tool `buscar_acordaos_tcu` (jurisprudência no fluxo de análise
+# de reequilíbrio). Índice V2 1024-dim/cosine; query com returnMetadata:"all".
+[[vectorize]]
+binding = "VECTORIZE_ACORDAOS"
+index_name = "acordaos-tcu"
+
 [[r2_buckets]]
 binding = "R2_LEIS"
 bucket_name = "vectorgov-t-leis"
@@ -35,6 +42,14 @@ binding = "DB"
 database_name = "vectorgov-t-db"
 database_id = "44068178-9600-42f3-875d-26ce47a11fd4"
 migrations_dir = "../../infra/d1-migrations"
+
+# D1 do worker de acórdãos (vectorgov-a-mcp), fora deste repo. Read-only —
+# busca lexical (buscar_acordaos_lexical) sobre a FTS5 itens_fts. Sem migrations
+# daqui: o schema é mantido pelo vectorgov-a-mcp.
+[[d1_databases]]
+binding = "DB_ACORDAOS"
+database_name = "vectorgov-a-db"
+database_id = "1c5359d7-a512-44e7-b781-50df379655aa"
 
 [[kv_namespaces]]
 binding = "CACHE"

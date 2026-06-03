@@ -535,8 +535,10 @@ export type ClassificarMeritoOutputT = z.infer<typeof ClassificarMeritoOutput>;
 // ============================================================================
 
 /**
- * Lista de nomes das 11 tools registradas (snake_case conforme convenção MCP).
- * Em sync com o registry em `apps/mcp-server/src/mcp/tools/registry.ts`.
+ * Lista de nomes das 18 tools de leis/fiscais/catálogo/jurisprudência
+ * (snake_case conforme convenção MCP). Em sync com o array `MCP_TOOLS` em
+ * `apps/mcp-server/src/mcp/tools/index.ts`. As 4 tools de skills (Track E) não
+ * entram aqui — são registradas via o registry de skills.
  */
 export const MCP_TOOL_NAMES = [
   "buscar_legislacao",
@@ -555,5 +557,7 @@ export const MCP_TOOL_NAMES = [
   "buscar_catalogo_semantico",
   "grep_catalogo",
   "buscar_documentos_suporte",
+  "buscar_acordaos_tcu",
+  "buscar_acordaos_lexical",
 ] as const;
 export type McpToolName = (typeof MCP_TOOL_NAMES)[number];
