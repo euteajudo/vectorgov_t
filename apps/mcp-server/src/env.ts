@@ -30,6 +30,11 @@ export interface Env {
   // catálogo erram com clareza se ausente. Populado pelo ETL (scripts/catalogo-etl).
   VECTORIZE_CATMAT?: VectorizeIndex;
 
+  // Índice de acórdãos do TCU (`acordaos-tcu`), populado pelo worker de ingestão
+  // `vectorgov-a-mcp`. Opcional: a tool `buscar_acordaos_tcu` erra com clareza se
+  // ausente. A metadata do vetor já traz o texto + dados de citação.
+  VECTORIZE_ACORDAOS?: VectorizeIndex;
+
   // R2 buckets
   R2_LEIS: R2Bucket;
   R2_SKILLS: R2Bucket;

@@ -22,6 +22,13 @@ index_name = "legislacao-tributaria"
 binding = "VECTORIZE_CATMAT"
 index_name = "catmat-catser"
 
+# Índice de acórdãos do TCU (populado pelo worker de ingestão `vectorgov-a-mcp`).
+# Consultado pela tool `buscar_acordaos_tcu` (jurisprudência no fluxo de análise
+# de reequilíbrio). Índice V2 1024-dim/cosine; query com returnMetadata:"all".
+[[vectorize]]
+binding = "VECTORIZE_ACORDAOS"
+index_name = "acordaos-tcu"
+
 [[r2_buckets]]
 binding = "R2_LEIS"
 bucket_name = "vectorgov-t-leis"

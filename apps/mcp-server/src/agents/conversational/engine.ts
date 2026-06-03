@@ -71,6 +71,9 @@ const CHAT_LEI_TOOL_NAMES = new Set([
   "fs_grep",
   "fs_ler_dispositivo",
   "fs_ler_intervalo",
+  // Jurisprudência do TCU — read-only, mesmo grounding por `label`. Útil no
+  // chat para o usuário consultar precedentes sobre reequilíbrio.
+  "buscar_acordaos_tcu",
 ]);
 
 const CHAT_SKILL_TOOL_NAMES = new Set([
