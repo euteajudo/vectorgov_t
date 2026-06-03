@@ -17,18 +17,23 @@ import type {
 } from "@vectorgov-t/schemas";
 
 /**
- * URL base do Worker MCP. Lida de `NEXT_PUBLIC_MCP_WORKER_URL` em runtime
- * (precisa estar disponível no client). Fallback para localhost durante dev.
+ * URL base do Worker MCP.
  *
- * Não usamos `process.env` direto em tempo de build porque o usuário pode
- * trocar de ambiente sem rebuild — em Cloudflare Pages, env vars públicas
- * são injetadas no bundle como `NEXT_PUBLIC_*`.
+ * `NEXT_PUBLIC_*` são INLINADAS no bundle do cliente durante o `next build` —
+ * se a var não estiver no ambiente de build, vira `undefined`. Por isso o
+ * fallback é a URL de PRODUÇÃO (não localhost): garante que o app funcione
+ * mesmo quando o build roda sem as vars setadas (mesma resiliência do
+ * `config-api.ts`). Para dev local, exporte `NEXT_PUBLIC_MCP_WORKER_URL` (ou
+ * `NEXT_PUBLIC_MCP_BASE_URL`) apontando para `http://localhost:8787`.
  */
 function getBaseUrl(): string {
-  if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_MCP_WORKER_URL) {
-    return process.env.NEXT_PUBLIC_MCP_WORKER_URL;
+  if (typeof process !== "undefined") {
+    const url =
+      process.env.NEXT_PUBLIC_MCP_WORKER_URL ??
+      process.env.NEXT_PUBLIC_MCP_BASE_URL;
+    if (url) return url;
   }
-  return "http://localhost:8787";
+  return "https://vectorgov-t-mcp.souzat19.workers.dev";
 }
 
 /**
