@@ -43,6 +43,14 @@ database_name = "vectorgov-t-db"
 database_id = "44068178-9600-42f3-875d-26ce47a11fd4"
 migrations_dir = "../../infra/d1-migrations"
 
+# D1 do worker de acórdãos (vectorgov-a-mcp), fora deste repo. Read-only —
+# busca lexical (buscar_acordaos_lexical) sobre a FTS5 itens_fts. Sem migrations
+# daqui: o schema é mantido pelo vectorgov-a-mcp.
+[[d1_databases]]
+binding = "DB_ACORDAOS"
+database_name = "vectorgov-a-db"
+database_id = "1c5359d7-a512-44e7-b781-50df379655aa"
+
 [[kv_namespaces]]
 binding = "CACHE"
 id = "0b4eaf157c064a51bcbf1d5e87af6f66"

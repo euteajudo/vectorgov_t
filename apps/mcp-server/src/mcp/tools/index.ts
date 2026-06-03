@@ -8,9 +8,9 @@
  *   - Fiscal (2 tools)              — engine de cálculo + regra de mérito
  *   - Vantajosidade (3 tools)       — preços públicos + docs + pesquisa web
  *   - Catálogo (2 tools)            — CATMAT/CATSER semântico + grep
- *   - Jurisprudência (1 tool)       — busca semântica em acórdãos do TCU
+ *   - Jurisprudência (2 tools)      — acórdãos do TCU: semântica + lexical
  *
- * Total: 21 tools expostas em `tools/list` (17 Track D + 4 skills Track E).
+ * Total: 22 tools expostas em `tools/list` (18 Track D + 4 skills Track E).
  *
  * Convenção de adição de tool nova:
  *   1. Criar `src/mcp/tools/<grupo>/<slug>.ts`.
@@ -52,11 +52,12 @@ import { pesquisarWebTool } from "./web/pesquisar-web.js";
 import { buscarCatalogoSemanticoTool } from "./catalogo/buscar-catalogo-semantico.js";
 import { grepCatalogoTool } from "./catalogo/grep-catalogo.js";
 
-// Jurisprudência do TCU — busca semântica em acórdãos (índice acordaos-tcu)
+// Jurisprudência do TCU — busca semântica (Vectorize) + lexical (FTS5)
 import { buscarAcordaosTcuTool } from "./semantic/buscar-acordaos-tcu.js";
+import { buscarAcordaosLexicalTool } from "./semantic/buscar-acordaos-lexical.js";
 
 /**
- * Array das 17 tools de leis/fiscais/catálogo/jurisprudência na ordem canônica.
+ * Array das 18 tools de leis/fiscais/catálogo/jurisprudência na ordem canônica.
  * As 4 tools de skills NÃO aparecem aqui — são registradas via `registry.ts`
  * pelo boot do `./skills/index.js`.
  */
@@ -78,6 +79,7 @@ export const MCP_TOOLS: ToolDescriptor[] = [
   grepCatalogoTool,
   buscarDocumentosSuporteTool,
   buscarAcordaosTcuTool,
+  buscarAcordaosLexicalTool,
 ];
 
 const BY_NAME: Map<string, ToolDescriptor> = new Map(

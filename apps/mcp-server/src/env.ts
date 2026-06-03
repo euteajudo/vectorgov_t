@@ -41,6 +41,12 @@ export interface Env {
 
   // D1
   DB: D1Database;
+  /**
+   * D1 do worker de acórdãos (`vectorgov-a-db`, fora deste repo). Read-only —
+   * usado pela busca LEXICAL (`buscar_acordaos_lexical`) sobre a FTS5
+   * `itens_fts`. Opcional: se ausente, a tool lexical erra com clareza.
+   */
+  DB_ACORDAOS?: D1Database;
 
   // KV
   CACHE: KVNamespace;

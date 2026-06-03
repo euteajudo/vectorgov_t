@@ -72,8 +72,10 @@ const CHAT_LEI_TOOL_NAMES = new Set([
   "fs_ler_dispositivo",
   "fs_ler_intervalo",
   // Jurisprudência do TCU — read-only, mesmo grounding por `label`. Útil no
-  // chat para o usuário consultar precedentes sobre reequilíbrio.
+  // chat para o usuário consultar precedentes sobre reequilíbrio. Semântica
+  // (conceito) + lexical (termo exato/processo/relator/relatório).
   "buscar_acordaos_tcu",
+  "buscar_acordaos_lexical",
 ]);
 
 const CHAT_SKILL_TOOL_NAMES = new Set([

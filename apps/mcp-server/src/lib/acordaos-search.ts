@@ -15,43 +15,13 @@
  * Pipeline: embed bge-m3 → Vectorize topK=20 → rerank bge-reranker-base → top_k.
  */
 import type { Env } from "../env.js";
+import { buildLabel } from "./acordaos-shared.js";
+import type { AcordaoFiltros, AcordaoSnippet } from "./acordaos-shared.js";
+export type { AcordaoFiltros, AcordaoSnippet } from "./acordaos-shared.js";
 
 const EMBEDDING_MODEL = "@cf/baai/bge-m3";
 const RERANKER_MODEL = "@cf/baai/bge-reranker-base";
 const PER_RANKER_TOP_K = 20;
-
-const COLEGIADO_LABEL: Record<string, string> = {
-  plenario: "Plenário",
-  primeira_camara: "Primeira Câmara",
-  segunda_camara: "Segunda Câmara",
-};
-
-export interface AcordaoFiltros {
-  colegiado?: string;
-  ano?: number;
-  secao?: string;
-}
-
-export interface AcordaoSnippet {
-  /** item_id canônico do chunk (`acordao-…#secao-rotulo`). */
-  item_id: string;
-  acordao_id: string;
-  numero: string;
-  ano: number;
-  colegiado: string;
-  secao: string;
-  rotulo: string | null;
-  /** Label humano de citação (ex.: "Acórdão 1148/2022-TCU-Plenário, voto §11"). */
-  label: string;
-  texto: string;
-  /** Relator do acórdão, quando a metadata do chunk traz (nem todo chunk tem). */
-  relator: string | null;
-  /** Tipo do dispositivo (ex.: "determinacao", "recomendacao"), quando houver. */
-  tipo_dispositivo: string | null;
-  /** Score do rerank (ou do Vectorize quando o rerank não pontua o item). */
-  score: number;
-  r2_key: string | null;
-}
 
 /** Subset da metadata do vetor que consumimos (gravada pela ingestão). */
 interface AcordaoMeta {
@@ -96,53 +66,6 @@ async function rerank(
     }
   }
   return out;
-}
-
-/**
- * Sufixo de parágrafo para voto/relatório. SÓ emite "§N" quando o rótulo é um
- * parágrafo de fato (`p11` → ` §11`). Chunks de JANELA (`w06`) NÃO são
- * parágrafos — citamos só a seção, sem § inventado, para não fabricar um número
- * de parágrafo que não existe no acórdão.
- */
-function paragrafo(rotulo: string): string {
-  const m = /^p(\d+)/i.exec(rotulo);
-  return m ? ` §${m[1]}` : "";
-}
-
-/** Monta a citação humana a partir da metadata (secao/rotulo → §, item, etc.). */
-function buildLabel(m: AcordaoMeta): string {
-  const numero = m.numero ?? "?";
-  const ano = m.ano ?? "?";
-  const coleg = COLEGIADO_LABEL[m.colegiado ?? ""] ?? m.colegiado ?? "";
-  const base = `Acórdão ${numero}/${ano}-TCU-${coleg}`;
-  const secao = m.secao;
-  const rotulo = m.rotulo;
-  if (!secao || rotulo === null || rotulo === undefined || rotulo === "") {
-    return base;
-  }
-  const r = String(rotulo);
-  switch (secao) {
-    case "sumario":
-      return `${base}, sumário`;
-    case "acordao":
-      // Só vira "item N.N" quando o rótulo é mesmo um item numerado (`item9.1`).
-      // Rótulos sem número (ex.: literal "acordao", a cabeça do dispositivo)
-      // citam apenas a base — nunca um "item acordao" inexistente.
-      return /^item\s*\d/i.test(r)
-        ? `${base}, item ${r.replace(/^item\s*/i, "")}`
-        : base;
-    case "voto":
-      return `${base}, voto${paragrafo(r)}`;
-    case "relatorio":
-      return `${base}, relatório${paragrafo(r)}`;
-    case "enunciado":
-      // Strip do "e" só quando seguido de dígito (`e01` → `01`); "01" fica como
-      // está. Evita mutilar rótulos que já vêm como número puro.
-      return `${base}, enunciado ${r.replace(/^e(?=\d)/i, "")}`;
-    default:
-      // Seção desconhecida: cita só a base — nunca anexa rótulo cru/ambíguo.
-      return base;
-  }
 }
 
 /**
