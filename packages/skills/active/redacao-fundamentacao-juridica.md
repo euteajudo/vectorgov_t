@@ -111,7 +111,7 @@ export const FundamentacaoJuridicaSchema = z.object({
 
 ### Exemplo 2 — Movimento de jurisprudência
 
-> Aviso: os Acórdãos do TCU citados a seguir (1.595/2018-Plenário e 2.860/2023-Plenário) são **exemplos hipotéticos meramente ilustrativos da estrutura argumentativa esperada** — devem ser substituídos por jurisprudência confirmada (via skill `verificacao-citacoes-literais` + tool `lei_buscar_jurisprudencia`) antes de qualquer uso em produção.
+> Aviso: os Acórdãos do TCU citados a seguir (1.595/2018-Plenário e 2.860/2023-Plenário) são **exemplos hipotéticos meramente ilustrativos da estrutura argumentativa esperada** — devem ser substituídos por jurisprudência confirmada (via skill `verificacao-citacoes-literais` + tools `buscar_acordaos_tcu` para achar precedentes e `buscar_acordaos_lexical` para confirmar o texto exato) antes de qualquer uso em produção.
 
 ```json
 {

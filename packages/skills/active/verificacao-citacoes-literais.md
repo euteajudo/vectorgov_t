@@ -32,7 +32,7 @@ status: active
 
 ## Quando usar
 
-Use como ÚLTIMO passo antes de entregar o parecer ao analista humano. O Auditor verifica cada trecho entre aspas contra a fonte oficial (lei via tool `lei_consultar_artigo`, jurisprudência via `lei_buscar_jurisprudencia`), produzindo um relatório de fidelidade.
+Use como ÚLTIMO passo antes de entregar o parecer ao analista humano. O Auditor verifica cada trecho entre aspas contra a fonte oficial (lei via `consultar_artigo`; jurisprudência via `buscar_acordaos_lexical` para casar o texto exato do acórdão, ou `buscar_acordaos_tcu`), produzindo um relatório de fidelidade.
 
 Esta skill é o pilar do princípio "anti-alucinação por design" do Vectorgov_t.
 
@@ -45,7 +45,7 @@ Não use para:
 Para cada citação literal:
 
 1. **Extrair**: identificar todo trecho entre aspas duplas (`"..."`) ou simples (`'...'`) que contenha 3+ palavras e esteja seguido de referência (`Art. X`, `Acórdão Y`).
-2. **Resolver fonte**: localizar o artigo/acórdão/dispositivo via tools de filesystem (`lei_consultar_artigo`, `lei_buscar_jurisprudencia` — Track D).
+2. **Resolver fonte**: localizar o artigo/acórdão/dispositivo via tools de consulta da base (`consultar_artigo` para leis; `buscar_acordaos_lexical`/`buscar_acordaos_tcu` para acórdãos — Track D).
 3. **Comparar**: normalizar pontuação, espaços, hífens e acentuação; confrontar caractere a caractere.
 4. **Tolerar variações benignas**: pequenas diferenças tipográficas (`"` vs `”`), elisão indicada por `[...]`, supressão de notas de rodapé.
 5. **Rejeitar variações materiais**: acréscimo/supressão de palavras alterando sentido; troca de número de artigo; mudança de quantificadores ("todos" → "alguns").
@@ -167,6 +167,6 @@ export const VerificacaoCitacoesSchema = z.object({
 - **Aceitar variações materiais como benignas**: troca de "deve" por "pode", supressão de "exceto", inclusão de "sempre" — todas alteram o comando normativo.
 - **Aprovar quando há `referencia_inexistente`**: zero tolerância para citações fabricadas. Veredicto SEMPRE `reprovado`.
 - **Confundir paráfrase com citação literal**: paráfrase (sem aspas) não passa por esta verificação; só trechos entre aspas precisam de fidelidade caractere a caractere.
-- **Não consultar a fonte oficial**: a verificação visual sem tool de filesystem não conta — use sempre `lei_consultar_artigo` ou `lei_buscar_jurisprudencia`.
+- **Não consultar a fonte oficial**: a verificação visual sem tool não conta — use sempre `consultar_artigo` (leis) ou `buscar_acordaos_lexical`/`buscar_acordaos_tcu` (acórdãos).
 - **Tolerância excessiva com elisão**: `[...]` é aceitável se preserva sentido; corte que muda significado é reprovação.
 - **Verificar só leis, esquecer jurisprudência**: acórdãos do TCU/STJ/STF também precisam ser confirmados — citação imprecisa de jurisprudência é tão grave quanto de lei.
