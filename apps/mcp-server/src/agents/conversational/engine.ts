@@ -436,7 +436,12 @@ export function buildTools(
       const peticaoId = analise.peticao_id ?? analise.id;
       // Fecha a transição PETICAO_EXTRAIDA→ANALISE_PRONTA da FSM: liga o
       // notebook à análise para o estado seguinte ser derivado do real.
-      await notebook.salvarAnaliseId(peticaoId, analise.veredito);
+      //
+      // CRÍTICO: o link tem que ser `analise.id` (PK do store
+      // SessionAgent.peticoes_analisadas), pois `gerar_parecer` faz
+      // `carregarAnalise(link.analise_id)`. Linkar `peticao_id` quebrava o
+      // parecer ("Análise não encontrada no store") quando peticao_id ≠ id.
+      await notebook.salvarAnaliseId(analise.id, analise.veredito);
       return {
         veredito: analise.veredito,
         score_confianca: analise.score_confianca,
