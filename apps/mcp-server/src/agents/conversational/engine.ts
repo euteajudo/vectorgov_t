@@ -683,42 +683,67 @@ export async function conversar(opts: ConversarOpts): Promise<ResultadoConversa>
     { nome: string; args: unknown }
   >();
 
-  for await (const ev of llm.streamText({
-    modelo: modeloEscolhido,
-    system,
-    messages,
-    tools,
-    maxSteps: 8,
-    temperatura: 0.5,
-    tag: "notebook-chat",
-    signal,
-  })) {
-    await emitEvent(ev, onEvent, {
-      addText: (t) => (textoAcumulado += t),
-      addToolCall: (id, name, args) => {
-        toolCallsPendentes.set(id, { nome: name, args });
-      },
-      addToolResult: (id, result, isError) => {
-        const pend = toolCallsPendentes.get(id);
-        if (pend) {
-          toolCalls.push({
-            id,
-            nome: pend.nome,
-            args: pend.args,
-            resultado: isError ? null : result,
-            erro: isError ? formatToolError(result) : null,
-          });
-          toolCallsPendentes.delete(id);
-        }
-      },
-      setUsage: (u, reason) => {
-        tokensTotal = u;
-        finishReason = reason;
-      },
-    });
-    if (ev.type === "error") {
-      finishReason = "error";
+  // Watchdog de ociosidade: se o condutor (streamText do Gemini) ficar SEM
+  // nenhum evento por IDLE_MS, abortamos e tratamos como erro — em vez de
+  // pendurar o turno por minutos (o Gemini às vezes trava a geração). Reseta a
+  // cada evento, então tools longas (ex.: análise PEVS) não disparam falso-positivo.
+  const IDLE_MS = 300_000; // 5 min sem QUALQUER evento do stream
+  const watchCtrl = new AbortController();
+  const sinalStream = signal
+    ? AbortSignal.any([signal, watchCtrl.signal])
+    : watchCtrl.signal;
+  let watchTimer: ReturnType<typeof setTimeout> | null = null;
+  const resetWatch = (): void => {
+    if (watchTimer) clearTimeout(watchTimer);
+    watchTimer = setTimeout(() => watchCtrl.abort(), IDLE_MS);
+  };
+
+  try {
+    resetWatch();
+    for await (const ev of llm.streamText({
+      modelo: modeloEscolhido,
+      system,
+      messages,
+      tools,
+      maxSteps: 8,
+      temperatura: 0.5,
+      tag: "notebook-chat",
+      signal: sinalStream,
+    })) {
+      resetWatch();
+      await emitEvent(ev, onEvent, {
+        addText: (t) => (textoAcumulado += t),
+        addToolCall: (id, name, args) => {
+          toolCallsPendentes.set(id, { nome: name, args });
+        },
+        addToolResult: (id, result, isError) => {
+          const pend = toolCallsPendentes.get(id);
+          if (pend) {
+            toolCalls.push({
+              id,
+              nome: pend.nome,
+              args: pend.args,
+              resultado: isError ? null : result,
+              erro: isError ? formatToolError(result) : null,
+            });
+            toolCallsPendentes.delete(id);
+          }
+        },
+        setUsage: (u, reason) => {
+          tokensTotal = u;
+          finishReason = reason;
+        },
+      });
+      if (ev.type === "error") {
+        finishReason = "error";
+      }
     }
+  } catch {
+    // Abort (idle/cliente) ou erro do stream: não derruba o turno — segue para
+    // o fallback abaixo, que garante uma resposta não-vazia ao usuário.
+    finishReason = "error";
+  } finally {
+    if (watchTimer) clearTimeout(watchTimer);
   }
 
   // Tool calls sem resultado (raro — só se stream foi abortado).
@@ -730,6 +755,26 @@ export async function conversar(opts: ConversarOpts): Promise<ResultadoConversa>
       resultado: null,
       erro: "tool call não completou (stream interrompido)",
     });
+  }
+
+  // Fallback anti-resposta-vazia: o condutor às vezes roda tools e termina sem
+  // emitir texto (ou trava e é abortado). Nunca deixar a resposta em branco —
+  // o entregável real (análise/parecer) já foi persistido pelas tools.
+  if (textoAcumulado.trim() === "") {
+    const transicaoOk = toolCalls.some(
+      (t) =>
+        !t.erro &&
+        [
+          "gerar_parecer",
+          "analisar_reequilibrio",
+          "extrair_peticao_do_documento",
+        ].includes(t.nome),
+    );
+    textoAcumulado = transicaoOk
+      ? "✅ Concluí esta etapa. Veja as próximas ações abaixo e o painel à direita (fase atual)."
+      : "Não consegui concluir a resposta agora (o serviço demorou). Pode tentar de novo?";
+    if (!transicaoOk && finishReason === "stop") finishReason = "error";
+    await onEvent({ type: "token", text: textoAcumulado });
   }
 
   const messageId =

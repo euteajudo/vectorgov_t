@@ -24,6 +24,8 @@ import type {
 export interface EstadoNotebook {
   estado: EstadoConversa;
   veredito: string | null;
+  /** Chave durável da análise (para buscar o parecer / diagnóstico). */
+  analise_id?: string | null;
 }
 
 const BASE =
