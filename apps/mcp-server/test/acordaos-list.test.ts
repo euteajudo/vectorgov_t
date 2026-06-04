@@ -68,6 +68,24 @@ describe("listarAcordaos", () => {
     expect(await listarAcordaos(envWith([]))).toEqual([]);
   });
 
+  it("BLINDAGEM: exclui entradas degeneradas (numero='' ou ano=0) do parser falho", async () => {
+    const degenerado = {
+      acordao_id: "acordao--0-primeira_camara",
+      numero: "",
+      ano: 0,
+      colegiado: "primeira_camara",
+      relator: null,
+      processo_tc: "018.063/2018-7",
+      data_sessao: null,
+      criado_em: "2026-06-04 03:40:52",
+      total_itens: 0,
+      total_indexados: 0,
+    };
+    const out = await listarAcordaos(envWith([degenerado, ROW]));
+    expect(out).toHaveLength(1);
+    expect(out[0]!.acordao_id).toBe("acordao-1148-2022-plenario");
+  });
+
   it("erra com clareza quando o D1 de acórdãos não está configurado", async () => {
     const env = {} as unknown as Env;
     await expect(listarAcordaos(env)).rejects.toThrow(/DB_ACORDAOS/);
