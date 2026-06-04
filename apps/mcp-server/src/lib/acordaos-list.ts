@@ -46,7 +46,13 @@ export async function listarAcordaos(env: Env): Promise<AcordaoResumo[]> {
   }
 
   // Cabeçalho + contagem de chunks (total e os vetorizados). LEFT JOIN para que
-  // um acórdão sem chunks ainda apareça. Mais recentes primeiro.
+  // um acórdão sem chunks ainda apareça.
+  //
+  // Blindagem: exclui entradas DEGENERADAS — quando o parser do vectorgov-a-mcp
+  // falha em extrair número/ano, ele grava um cabeçalho órfão com `numero=''` e
+  // `ano=0` (id `acordao--0-<colegiado>`) e a ingestão falha sem chunks. Esses
+  // registros não devem aparecer na lista (não são acórdãos válidos/buscáveis).
+  // Mais recentes primeiro.
   const sql =
     "SELECT a.id AS acordao_id, a.numero, a.ano, a.colegiado, a.relator, " +
     "a.processo_tc, a.data_sessao, a.criado_em, " +
@@ -54,11 +60,15 @@ export async function listarAcordaos(env: Env): Promise<AcordaoResumo[]> {
     "COALESCE(SUM(i.indexado_vetor), 0) AS total_indexados " +
     "FROM acordaos a " +
     "LEFT JOIN itens_acordao i ON i.acordao_id = a.id " +
+    "WHERE a.numero IS NOT NULL AND a.numero <> '' AND a.ano > 0 " +
     "GROUP BY a.id " +
     "ORDER BY a.criado_em DESC, a.ano DESC, a.numero DESC";
 
   const res = await env.DB_ACORDAOS.prepare(sql).all<AcordaoRow>();
-  return (res.results ?? []).map((r) => ({
+  return (res.results ?? [])
+    // Defesa em profundidade (além do WHERE): nunca devolve entrada degenerada.
+    .filter((r) => (r.numero ?? "") !== "" && (typeof r.ano === "number" ? r.ano : 0) > 0)
+    .map((r) => ({
     acordao_id: r.acordao_id,
     numero: r.numero ?? "",
     ano: typeof r.ano === "number" ? r.ano : 0,
