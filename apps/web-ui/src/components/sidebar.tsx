@@ -18,6 +18,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   FileText,
+  Gavel,
   History,
   Home,
   Library,
@@ -70,10 +71,16 @@ const NAV_ITEMS: NavItem[] = [
     description: "Indexar lei/decreto",
   },
   {
+    href: "/admin/acordaos",
+    label: "Acórdãos do TCU",
+    icon: <Gavel className="h-4 w-4" />,
+    description: "Ingerir acórdãos (reequilíbrio)",
+  },
+  {
     href: "/admin/config",
     label: "Configurações",
     icon: <Settings className="h-4 w-4" />,
-    description: "API key + modelos",
+    description: "Modelos por função",
   },
 ];
 

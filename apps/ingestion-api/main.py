@@ -116,16 +116,18 @@ async def parse(
     return result
 
 
-@app.post("/parse-doc")
-async def parse_doc(
-    pdf: UploadFile = File(..., description="PDF arbitrario (peticao, contrato, parecer, etc.)"),
-    x_ingestion_secret: str | None = Header(None),
+async def _extrair_texto_por_pagina(
+    pdf: UploadFile,
+    x_ingestion_secret: str | None,
+    rota: str,
 ) -> dict:
     """
-    Parseia um PDF arbitrario e retorna texto por pagina.
+    Extrai texto por pagina de um PDF arbitrario (sem semantica juridica).
 
-    Diferente de /parse, NAO assume estrutura juridica. Usado pelo chat
-    NotebookLM onde o usuario pode subir qualquer documento.
+    Logica compartilhada por POST /parse-doc e POST /extract. Diferente de
+    /parse, NAO assume estrutura de norma legal — apenas texto bruto por pagina
+    (PyMuPDF). A estruturacao especifica do documento (ex.: secoes de um acordao
+    do TCU) e responsabilidade de quem consome, nao deste container.
 
     Output:
         {
@@ -148,7 +150,7 @@ async def parse_doc(
     pdf_hash = hashlib.sha256(pdf_bytes).hexdigest()
 
     logger.info(
-        f"POST /parse-doc: filename={pdf.filename}, "
+        f"POST /{rota}: filename={pdf.filename}, "
         f"size={len(pdf_bytes)} bytes, hash={pdf_hash[:16]}..."
     )
 
@@ -187,3 +189,25 @@ async def parse_doc(
         "total_chars": total_chars,
         "pdf_hash": pdf_hash,
     }
+
+
+@app.post("/parse-doc")
+async def parse_doc(
+    pdf: UploadFile = File(..., description="PDF arbitrario (peticao, contrato, parecer, etc.)"),
+    x_ingestion_secret: str | None = Header(None),
+) -> dict:
+    """Texto por pagina de um PDF arbitrario (chat NotebookLM)."""
+    return await _extrair_texto_por_pagina(pdf, x_ingestion_secret, "parse-doc")
+
+
+@app.post("/extract")
+async def extract(
+    file: UploadFile = File(..., description="PDF arbitrario (ex.: acordao do TCU)"),
+    x_ingestion_secret: str | None = Header(None),
+) -> dict:
+    """
+    Alias de /parse-doc usado pelo worker de acordaos (vectorgov-a-mcp), que
+    chama `env.INGESTION.fetch("/extract")` com o campo `file`. Mesmo output
+    ({pages, pdf_hash}) — a estruturacao do acordao acontece no worker.
+    """
+    return await _extrair_texto_por_pagina(file, x_ingestion_secret, "extract")
