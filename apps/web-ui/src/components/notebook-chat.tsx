@@ -21,12 +21,19 @@ import {
 } from "react";
 import Link from "next/link";
 import { Send, Bot, User, Wrench, ChevronDown, ChevronRight, KeyRound } from "lucide-react";
-import type { ChatEvent, Mensagem, ToolCall } from "@vectorgov-t/schemas";
+import type {
+  ChatEvent,
+  EstadoConversa,
+  Mensagem,
+  ToolCall,
+} from "@vectorgov-t/schemas";
 import {
   abrirChatSocket,
+  getEstadoNotebook,
   listarMensagens,
   type ChatSocket,
 } from "../lib/notebooks-api";
+import { WorkflowSidebar } from "./notebook/WorkflowSidebar";
 import { useApiKey } from "../lib/api-key-store";
 
 /**
@@ -269,9 +276,30 @@ export function NotebookChat({
   const [input, setInput] = useState("");
   const [conectado, setConectado] = useState(false);
   const [erroConexao, setErroConexao] = useState<string | null>(null);
+  const [fase, setFase] = useState<EstadoConversa | null>(null);
+  const [veredito, setVeredito] = useState<string | null>(null);
   const socketRef = useRef<ChatSocket | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const { apiKey, ready: apiKeyReady } = useApiKey();
+
+  // Carga inicial da fase do workflow (a barra lateral). Atualizações ao vivo
+  // vêm depois no evento WS "done".
+  useEffect(() => {
+    let cancelado = false;
+    getEstadoNotebook(notebookId)
+      .then((e) => {
+        if (!cancelado) {
+          setFase(e.estado);
+          setVeredito(e.veredito);
+        }
+      })
+      .catch(() => {
+        /* sem fase: a barra mostra "carregando" — não bloqueia o chat */
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [notebookId]);
 
   // Carrega histórico via REST no mount.
   useEffect(() => {
@@ -386,6 +414,9 @@ export function NotebookChat({
         ]);
         return null;
       });
+      // Atualiza a barra de workflow com a fase pós-turno.
+      if (ev.estado) setFase(ev.estado);
+      setVeredito(ev.veredito ?? null);
     } else if (ev.type === "error") {
       setErroConexao(ev.message);
       setStream(null);
@@ -441,7 +472,9 @@ export function NotebookChat({
   );
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] flex-col">
+    <div className="flex h-[calc(100vh-4rem)]">
+      {/* Coluna do chat (ocupa o espaço restante) */}
+      <div className="flex min-w-0 flex-1 flex-col">
       <header className="border-b border-gray-200 bg-white px-4 py-3">
         <div className="flex items-center gap-2">
           <Bot className="h-5 w-5 text-blue-600" />
@@ -533,6 +566,11 @@ export function NotebookChat({
           </button>
         </div>
       </form>
+      </div>
+      {/* Barra lateral direita: fase do workflow do parecer (oculta em telas pequenas) */}
+      <aside className="hidden w-80 flex-none overflow-y-auto border-l border-gray-200 bg-white lg:block">
+        <WorkflowSidebar fase={fase} veredito={veredito} />
+      </aside>
     </div>
   );
 }

@@ -14,10 +14,17 @@
 import type {
   ChatEvent,
   ChatClientEvent,
+  EstadoConversa,
   Mensagem,
   NotebookMeta,
   UploadDocumentoOutput,
 } from "@vectorgov-t/schemas";
+
+/** Fase atual do FSM (barra de workflow do chat). */
+export interface EstadoNotebook {
+  estado: EstadoConversa;
+  veredito: string | null;
+}
 
 const BASE =
   process.env.NEXT_PUBLIC_MCP_BASE_URL ??
@@ -89,6 +96,16 @@ export async function listarNotebooks(): Promise<NotebookIdxEntry[]> {
 
 export async function getNotebook(id: string): Promise<NotebookMeta> {
   return fetchJson<NotebookMeta>(`/api/notebooks/${encodeURIComponent(id)}`);
+}
+
+/**
+ * Lê a fase atual do FSM da conversa (carga inicial da barra de workflow).
+ * Atualizações ao vivo vêm no evento WS "done".
+ */
+export async function getEstadoNotebook(id: string): Promise<EstadoNotebook> {
+  return fetchJson<EstadoNotebook>(
+    `/api/notebooks/${encodeURIComponent(id)}/estado`,
+  );
 }
 
 /**

@@ -276,6 +276,23 @@ export async function handleListarMensagens(
 }
 
 /**
+ * GET /api/notebooks/:id/estado — fase atual do FSM (barra de workflow do chat).
+ * Proxy pro DO `/estado` → `{ estado, rascunho, veredito }`.
+ */
+export async function handleGetEstado(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const id = notebookIdFromPath(url.pathname);
+  if (!id) return errorResponse("id inválido", 400);
+  const stub = pickStub(env, id);
+  const r = await stub.fetch(new Request("https://do.local/estado"));
+  if (!r.ok) return errorResponse(`DO retornou ${r.status}`, r.status);
+  return jsonResponse(await r.json());
+}
+
+/**
  * GET /api/notebooks/:id/chat — Upgrade: websocket. Apenas faz proxy
  * pro DO; o DO trata o WebSocket via state.acceptWebSocket.
  */

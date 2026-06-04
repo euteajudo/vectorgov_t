@@ -82,6 +82,25 @@ export const UploadDocumentoOutputSchema = z.object({
 export type UploadDocumentoOutput = z.infer<typeof UploadDocumentoOutputSchema>;
 
 /**
+ * Estado da conversa guiada (FSM). Definido AQUI (antes de `ChatEventSchema`)
+ * porque o evento "done" o referencia. Derivado SEMPRE do storage real do
+ * NotebookAgent:
+ *  - `AGUARDANDO_DOCUMENTO`: nenhum PDF anexado.
+ *  - `DOCUMENTO_RECEBIDO`:   PDF anexado, petição ainda não extraída.
+ *  - `PETICAO_EXTRAIDA`:     rascunho extraído (pode faltar dado p/ analisar).
+ *  - `ANALISE_PRONTA`:       análise persistida (veredito + citações auditadas).
+ *  - `PARECER_GERADO`:       parecer formal I-V gerado.
+ */
+export const EstadoConversaSchema = z.enum([
+  "AGUARDANDO_DOCUMENTO",
+  "DOCUMENTO_RECEBIDO",
+  "PETICAO_EXTRAIDA",
+  "ANALISE_PRONTA",
+  "PARECER_GERADO",
+]);
+export type EstadoConversa = z.infer<typeof EstadoConversaSchema>;
+
+/**
  * Eventos enviados do servidor pro cliente via WebSocket durante o stream
  * de uma resposta. Cliente parseia e atualiza UI a cada evento.
  */
@@ -108,6 +127,10 @@ export const ChatEventSchema = z.discriminatedUnion("type", [
     message_id: z.string().uuid(),
     tokens: z.number().int().nonnegative(),
     finish_reason: z.string(),
+    /** Fase do FSM APÓS o turno — alimenta a barra de workflow do chat. */
+    estado: EstadoConversaSchema.optional(),
+    /** Veredito da análise (quando em ANALISE_PRONTA): "inconclusiva" etc. */
+    veredito: z.string().nullable().optional(),
   }),
   z.object({
     type: z.literal("error"),
@@ -132,26 +155,9 @@ export type ChatClientEvent = z.infer<typeof ChatClientEventSchema>;
 
 // ===========================================================================
 // FSM da conversa guiada — ver docs/design/fsm-conversacional.md
+// `EstadoConversaSchema` / `EstadoConversa` são definidos acima (antes de
+// `ChatEventSchema`, que referencia o schema no evento "done").
 // ===========================================================================
-
-/**
- * Estado da conversa guiada (máquina de estados).
- *
- * Derivado SEMPRE do storage real do NotebookAgent (nunca da memória do LLM):
- *  - `AGUARDANDO_DOCUMENTO`: nenhum PDF anexado.
- *  - `DOCUMENTO_RECEBIDO`:   PDF anexado, petição ainda não extraída.
- *  - `PETICAO_EXTRAIDA`:     rascunho extraído (pode faltar dado p/ analisar).
- *  - `ANALISE_PRONTA`:       análise persistida (veredito + citações auditadas).
- *  - `PARECER_GERADO`:       parecer formal I-V gerado.
- */
-export const EstadoConversaSchema = z.enum([
-  "AGUARDANDO_DOCUMENTO",
-  "DOCUMENTO_RECEBIDO",
-  "PETICAO_EXTRAIDA",
-  "ANALISE_PRONTA",
-  "PARECER_GERADO",
-]);
-export type EstadoConversa = z.infer<typeof EstadoConversaSchema>;
 
 /**
  * Uma opção clicável apresentada ao usuário (chip). O frontend renderiza

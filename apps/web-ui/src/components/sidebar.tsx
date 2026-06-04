@@ -17,6 +17,7 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  BookOpen,
   FileText,
   Gavel,
   History,
@@ -45,6 +46,12 @@ const NAV_ITEMS: NavItem[] = [
     label: "Início",
     icon: <Home className="h-4 w-4" />,
     description: "Painel principal",
+  },
+  {
+    href: "/instrucoes",
+    label: "Instruções de uso",
+    icon: <BookOpen className="h-4 w-4" />,
+    description: "Como usar o sistema",
   },
   {
     href: "/notebooks",
