@@ -94,3 +94,67 @@ export async function getStatusAcordao(id: string): Promise<AcordaoStatus | null
   }
   return (await res.json()) as AcordaoStatus;
 }
+
+/* ------------------------------------------------------------------ *
+ * Listagem dos acórdãos carregados.
+ *
+ * ATENÇÃO: a LISTAGEM não fala com o `vectorgov-a-mcp` (upload) e sim com o
+ * `vectorgov-t-mcp` — que tem o binding read-only `DB_ACORDAOS` e expõe a tool
+ * MCP `listar_acordaos` no endpoint `/mcp/v1` (mesmo padrão do `fs_listar_normas`
+ * das leis). Por isso a base aqui é a do MCP, não a de ingestão.
+ * ------------------------------------------------------------------ */
+
+/** Base do `vectorgov-t-mcp` (onde vive a tool `listar_acordaos`). */
+function getMcpBaseUrl(): string {
+  if (typeof process !== "undefined") {
+    const url =
+      process.env.NEXT_PUBLIC_MCP_WORKER_URL ??
+      process.env.NEXT_PUBLIC_MCP_BASE_URL;
+    if (url) return url;
+  }
+  return "https://vectorgov-t-mcp.souzat19.workers.dev";
+}
+
+/** Item da listagem de acórdãos carregados (saída de `listar_acordaos`). */
+export interface AcordaoListItem {
+  acordao_id: string;
+  numero: string;
+  ano: number;
+  colegiado: string;
+  relator: string | null;
+  processo_tc: string | null;
+  data_sessao: string | null;
+  total_itens: number;
+  total_indexados: number;
+  criado_em: string | null;
+}
+
+/**
+ * Lista os acórdãos já carregados — via tool MCP `listar_acordaos` (JSON-RPC)
+ * no `vectorgov-t-mcp`. Espelha `listarNormas` das leis.
+ */
+export async function listarAcordaos(): Promise<AcordaoListItem[]> {
+  const res = await fetch(`${getMcpBaseUrl()}/mcp/v1`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "listar_acordaos", arguments: {} },
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`Falha ao listar acórdãos (${res.status})`);
+  }
+  const rpc = (await res.json()) as {
+    result?: { content?: Array<{ text?: string }> };
+    error?: { message?: string };
+  };
+  if (rpc.error) {
+    throw new Error(rpc.error.message ?? "erro do MCP ao listar acórdãos");
+  }
+  const texto = rpc.result?.content?.[0]?.text ?? "{}";
+  const data = JSON.parse(texto) as { acordaos?: AcordaoListItem[] };
+  return data.acordaos ?? [];
+}
