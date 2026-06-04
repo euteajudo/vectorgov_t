@@ -11,6 +11,7 @@ import { buildToolsForPEVS } from "./tools-adapter.js";
 import { getSessionAgentClient } from "./session-loader.js";
 import type { SessionAgent } from "./session-agent.js";
 import { getModelConfig } from "../lib/model-config.js";
+import { carregarSkillsPorPapel } from "../lib/skills-pevs.js";
 import type { Peticao, AnaliseReequilibrio } from "@vectorgov-t/schemas";
 
 export type OnFase = PEVSConfig["onFase"];
@@ -34,6 +35,10 @@ export async function criarEnginePEVS(
   const cfg = await getModelConfig(env);
   const tools = buildToolsForPEVS(env);
   const sessionAgent = getSessionAgentClient(env);
+  // Skills ativas por papel — injetadas no system prompt de cada agente. É o
+  // que faz editar uma skill mudar de verdade a análise e o parecer.
+  // Best-effort: se o R2 falhar, devolve {} e o PEVS roda com os prompts-base.
+  const skillsPorPapel = await carregarSkillsPorPapel(env);
   return new PEVSEngine({
     llm,
     // SessionAgentClient implementa só os métodos que o engine usa; o cast
@@ -41,6 +46,7 @@ export async function criarEnginePEVS(
     sessionAgent: sessionAgent as unknown as SessionAgent,
     tools,
     modelos: cfg.modelos,
+    skillsPorPapel,
     onFase: opts.onFase,
   });
 }

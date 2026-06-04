@@ -26,7 +26,7 @@
  *    para testes), `Date.now()` igualmente injetável (`now`). Sem essas
  *    injeções os testes não conseguem asserts estáveis.
  */
-import type { AgentContext, AgentLogger } from "./types.js";
+import type { AgentContext, AgentLogger, SkillFull } from "./types.js";
 import { consoleLogger } from "./types.js";
 import type { LLMClient } from "./llm/index.js";
 import { TrackedLLMClient, type SnapshotUso } from "./cost-tracker.js";
@@ -90,6 +90,12 @@ export interface PEVSConfig {
    * Propagado pro `AgentContext.modelos` em todas as fases.
    */
   modelos?: AgentContext["modelos"];
+  /**
+   * Skills ATIVAS indexadas por `role.nome` (carregadas do R2 pelo caller via
+   * `carregarSkillsPorPapel`). O motor injeta as do papel no system prompt de
+   * cada agente — é o que faz editar uma skill mudar a análise/parecer.
+   */
+  skillsPorPapel?: Record<string, SkillFull[]>;
   /**
    * Callback opcional chamado em cada transição de fase macro
    * (PLAN / EXECUTE / ANALYZE / VERIFY / SYNTHESIZE / done / failed).
@@ -162,6 +168,7 @@ export class PEVSEngine {
   };
   private readonly modelos: AgentContext["modelos"];
   private readonly onFase: PEVSConfig["onFase"];
+  private readonly skillsPorPapel: PEVSConfig["skillsPorPapel"];
 
   constructor(cfg: PEVSConfig) {
     this.cfg = {
@@ -175,6 +182,7 @@ export class PEVSEngine {
     };
     this.modelos = cfg.modelos;
     this.onFase = cfg.onFase;
+    this.skillsPorPapel = cfg.skillsPorPapel;
   }
 
   /**
@@ -236,6 +244,11 @@ export class PEVSEngine {
     this.cfg.logger.info(`PEVS.${fase}`, { tracingId, ...data });
   }
 
+  /** Skills ativas do papel (vazio se não houver) — injetadas no system prompt. */
+  private skillsDe(papel: string): SkillFull[] | undefined {
+    return this.skillsPorPapel?.[papel];
+  }
+
   /**
    * Emite o log de auditoria final de uma análise — formato fixo para
    * facilitar agregação em dashboards (Workers Logs / Analytics Engine).
@@ -291,7 +304,11 @@ export class PEVSEngine {
     this.logFase("PLAN", tracingId);
     await this.emitFase("PLAN", 10);
     const orquestrador = criarOrquestrador();
-    const plano = await orquestrador.executar({ peticao }, contexto);
+    const plano = await orquestrador.executar(
+      { peticao },
+      contexto,
+      this.skillsDe("orquestrador"),
+    );
     this.logFase("PLAN.ok", tracingId, {
       subtarefas: plano.subtarefas.length,
     });
@@ -338,6 +355,7 @@ export class PEVSEngine {
             competencia,
           },
           contexto,
+          this.skillsDe("pesquisador"),
         ),
         calculista.executar(
           {
@@ -345,6 +363,7 @@ export class PEVSEngine {
             contexto_pedido: `Calcule o valor do reequilíbrio com base no fato alegado.`,
           },
           contexto,
+          this.skillsDe("calculista"),
         ),
       ]);
       resultadoPesquisa = pesquisaP;
@@ -361,10 +380,12 @@ export class PEVSEngine {
             peticao,
           },
           contexto,
+          this.skillsDe("analista_juridico"),
         ),
         espLicit.executar(
           { pergunta_focal: perguntaComFeedback, resultado_pesquisa: pesquisaP },
           contexto,
+          this.skillsDe("esp_licitacoes"),
         ),
       ]);
 
@@ -380,6 +401,7 @@ export class PEVSEngine {
           resultado_calculista: calculosP,
         },
         contexto,
+        this.skillsDe("esp_reequilibrio"),
       );
 
       // FASE 4 — VERIFY (Auditor)
@@ -391,6 +413,7 @@ export class PEVSEngine {
       relatorioAuditor = await auditor.executar(
         { citacoes: pesquisaP.citacoes_candidatas },
         contexto,
+        this.skillsDe("auditor"),
       );
       this.logFase("VERIFY.ok", tracingId, {
         aprovadas: relatorioAuditor.citacoes_verificadas.filter(
@@ -511,6 +534,7 @@ export class PEVSEngine {
         parecer_id: parecerId,
       },
       contexto,
+      this.skillsDe("redator"),
     );
 
     // Persistir
