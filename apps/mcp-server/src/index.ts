@@ -29,6 +29,7 @@ import { enforceRateLimit } from "./lib/rate-limit.js";
 import { corsHeaders, withSecurity } from "./lib/security.js";
 import { errorResponse, jsonResponse } from "./lib/responses.js";
 import {
+  handleIngestaoHealth,
   handleIngestaoIniciar,
   handleIngestaoStatus,
 } from "./pipeline/handlers.js";
@@ -163,6 +164,12 @@ async function route(
 
   if (request.method === "GET" && url.pathname.startsWith("/ingestao/status/")) {
     return handleIngestaoStatus(request, env);
+  }
+
+  // Warm-up/health do Container Python — usado pelas UIs de ingestão para
+  // preparar o ambiente antes do upload (evita cold-start visível ao cliente).
+  if (request.method === "GET" && url.pathname === "/ingestao/health") {
+    return handleIngestaoHealth(env);
   }
 
   // -----------------------------------------------------------------------

@@ -15,6 +15,7 @@
 import { useEffect, useRef, useState, type FormEvent, type JSX } from "react";
 import { UploadCloud } from "lucide-react";
 import { UploadDropzone } from "../../../../components/ingestao/UploadDropzone";
+import { ContainerStatus } from "../../../../components/ContainerStatus";
 import {
   COLEGIADOS,
   iniciarIngestaoAcordao,
@@ -127,6 +128,8 @@ export default function AcordaosPage(): JSX.Element {
           item a item, no repositório que alimenta a análise de reequilíbrio.
         </p>
       </div>
+
+      <ContainerStatus />
 
       {erro && (
         <div

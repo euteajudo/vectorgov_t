@@ -17,6 +17,7 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent, type JSX } from "react";
 import { UploadDropzone } from "../../../../components/ingestao/UploadDropzone";
+import { ContainerStatus } from "../../../../components/ContainerStatus";
 import { uploadNorma } from "../../../../lib/ingestao-api";
 
 /** Espelha `NormaTipoSchema` do `@vectorgov-t/schemas/pipeline`. */
@@ -117,6 +118,8 @@ export default function NovaIngestaoPage(): JSX.Element {
           background e o progresso aparece na próxima tela.
         </p>
       </div>
+
+      <ContainerStatus />
 
       {erro && (
         <div
