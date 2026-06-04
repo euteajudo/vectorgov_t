@@ -514,6 +514,8 @@ export class NotebookAgent {
     estado: EstadoConversa;
     rascunho: PeticaoRascunho | null;
     veredito: string | null;
+    /** Chave durável da análise no SessionAgent (para buscar parecer/diagnóstico). */
+    analise_id: string | null;
   }> {
     const meta = await this.getMeta();
     const rascunho = await this.lerRascunho();
@@ -531,7 +533,12 @@ export class NotebookAgent {
       analiseId: analise?.analise_id ?? null,
       temParecer,
     });
-    return { estado, rascunho, veredito: analise?.veredito ?? null };
+    return {
+      estado,
+      rascunho,
+      veredito: analise?.veredito ?? null,
+      analise_id: analise?.analise_id ?? null,
+    };
   }
 
   /**
@@ -879,8 +886,9 @@ export class NotebookAgent {
       if (request.method === "GET" && pathname === "/estado") {
         // Fase atual do FSM para a barra de workflow do chat (carga inicial,
         // antes do 1º turno). Atualizações ao vivo vêm no evento WS "done".
-        const { estado, rascunho, veredito } = await this.derivarEstadoConversa();
-        return Response.json({ estado, rascunho, veredito });
+        const { estado, rascunho, veredito, analise_id } =
+          await this.derivarEstadoConversa();
+        return Response.json({ estado, rascunho, veredito, analise_id });
       }
       if (request.method === "POST" && pathname === "/excluir") {
         // Apaga todo o storage do DO (documento, chunks, histórico). O tipo
