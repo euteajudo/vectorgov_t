@@ -13,6 +13,8 @@
  */
 "use client";
 
+import { uploadComWarmup } from "./container-status";
+
 /**
  * Base do Worker de acórdãos. Hardcoded (como no bundle original) — não vem de
  * `NEXT_PUBLIC_*` para não depender do ambiente de build. Override por env.
@@ -56,17 +58,21 @@ export async function iniciarIngestaoAcordao(
   arquivo: File,
   meta: AcordaoMeta,
 ): Promise<string> {
-  const body = new FormData();
-  body.append("arquivo", arquivo, arquivo.name);
-  body.append("numero", meta.numero);
-  body.append("ano", String(meta.ano));
-  body.append("colegiado", meta.colegiado);
-  body.append("formato", FORMATO);
+  // Factory: o body é reconstruído a cada tentativa (uploadComWarmup reenvia
+  // em cold-start, e um FormData consumido não pode ser re-fetchado).
+  const criarBody = (): FormData => {
+    const body = new FormData();
+    body.append("arquivo", arquivo, arquivo.name);
+    body.append("numero", meta.numero);
+    body.append("ano", String(meta.ano));
+    body.append("colegiado", meta.colegiado);
+    body.append("formato", FORMATO);
+    return body;
+  };
 
-  const res = await fetch(`${BASE}/ingestao/iniciar`, {
-    method: "POST",
-    body,
-  });
+  // Retry transparente em cold-start: aquece o Container e reenvia, sem expor
+  // erro de container frio ao cliente.
+  const res = await uploadComWarmup(`${BASE}/ingestao/iniciar`, criarBody);
   if (!res.ok) {
     const txt = await res.text().catch(() => res.statusText);
     throw new Error(`Falha ao iniciar ingestão (${res.status}): ${txt}`);

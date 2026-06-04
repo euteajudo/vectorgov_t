@@ -262,3 +262,42 @@ export async function handleIngestaoStatus(
   }
   return jsonResponse(status);
 }
+
+/** Timeout do ping de health do Container (cold-start excede isto de propósito). */
+const HEALTH_PING_TIMEOUT_MS = 4500;
+
+/**
+ * GET /ingestao/health — pinga o `/health` do Container Python (via service
+ * binding `INGESTION`). O ping ESQUENTA o container: se estiver frio, dispara o
+ * cold-start. Timeout curto — se não responder a tempo, devolve `ready:false`
+ * + `aquecendo:true` (o warm-up já começou; o cliente re-checa em segundos).
+ * NÃO lança: a UI só precisa do booleano `ready`.
+ *
+ * Como leis (vectorgov-t-mcp) e acórdãos (vectorgov-a-mcp) usam o MESMO
+ * Container (`vectorgov-t-ingestion`), este único endpoint aquece os dois fluxos.
+ */
+export async function handleIngestaoHealth(env: Env): Promise<Response> {
+  const t0 = Date.now();
+  if (!env.INGESTION) {
+    return jsonResponse({ ready: false, motivo: "binding INGESTION ausente" });
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HEALTH_PING_TIMEOUT_MS);
+  try {
+    const res = await env.INGESTION.fetch(
+      new Request("https://ingestion.local/health", {
+        signal: controller.signal,
+      }),
+    );
+    return jsonResponse({ ready: res.ok, status: res.status, ms: Date.now() - t0 });
+  } catch (err) {
+    return jsonResponse({
+      ready: false,
+      aquecendo: true,
+      ms: Date.now() - t0,
+      erro: err instanceof Error ? err.name : "erro",
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}

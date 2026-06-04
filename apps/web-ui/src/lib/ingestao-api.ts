@@ -15,6 +15,7 @@ import type {
   IngestaoIniciarInput,
   IngestaoStatus,
 } from "@vectorgov-t/schemas";
+import { uploadComWarmup } from "./container-status";
 
 /**
  * URL base do Worker MCP.
@@ -84,26 +85,30 @@ export async function uploadNorma(
   meta: NormaInput,
   ingestaoId?: string,
 ): Promise<IngestaoResponse> {
-  const form = new FormData();
-  form.append("pdf", pdf, pdf.name);
-  form.append("lei_id", meta.lei_id);
-  form.append("lei_tipo", meta.lei_tipo);
-  form.append("numero", meta.numero);
-  form.append("ano", String(meta.ano));
-  form.append("data_publicacao", meta.data_publicacao);
-  form.append("reingestao", "true");
-  // Id gerado no cliente: o front navega para a tela de status (polling) ANTES
-  // do pipeline terminar, então a barra aparece desde o início.
-  if (ingestaoId) form.append("ingestao_id", ingestaoId);
+  // Factory: o body é reconstruído a cada tentativa (uploadComWarmup pode
+  // reenviar em cold-start; um FormData consumido não pode ser re-fetchado).
+  const criarForm = (): FormData => {
+    const form = new FormData();
+    form.append("pdf", pdf, pdf.name);
+    form.append("lei_id", meta.lei_id);
+    form.append("lei_tipo", meta.lei_tipo);
+    form.append("numero", meta.numero);
+    form.append("ano", String(meta.ano));
+    form.append("data_publicacao", meta.data_publicacao);
+    form.append("reingestao", "true");
+    // Id gerado no cliente: o front navega para a tela de status (polling)
+    // ANTES do pipeline terminar, então a barra aparece desde o início.
+    if (ingestaoId) form.append("ingestao_id", ingestaoId);
+    return form;
+  };
 
-  // ?sync=true mantém a conexão aberta durante todo o pipeline (sem o
-  // cancelamento do ctx.waitUntil() em PDFs grandes). O progresso continua
-  // visível porque o orquestrador grava o status no KV a cada fase e a tela de
-  // status faz polling em paralelo com este request.
-  const res = await fetch(`${getBaseUrl()}/ingestao/iniciar?sync=true`, {
-    method: "POST",
-    body: form,
-  });
+  // ?sync=true mantém a conexão aberta durante todo o pipeline. uploadComWarmup
+  // reenvia transparentemente se o Container estiver frio (5xx/erro de rede),
+  // aquecendo-o antes — o cliente não vê erro de cold-start.
+  const res = await uploadComWarmup(
+    `${getBaseUrl()}/ingestao/iniciar?sync=true`,
+    criarForm,
+  );
 
   if (!res.ok) {
     const txt = await res.text().catch(() => res.statusText);
