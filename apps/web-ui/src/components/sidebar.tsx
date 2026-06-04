@@ -74,7 +74,7 @@ const NAV_ITEMS: NavItem[] = [
     href: "/admin/acordaos",
     label: "Acórdãos do TCU",
     icon: <Gavel className="h-4 w-4" />,
-    description: "Ingerir acórdãos (reequilíbrio)",
+    description: "Acórdãos carregados (lista + ingestão)",
   },
   {
     href: "/admin/config",
