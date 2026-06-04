@@ -5,6 +5,7 @@
  * ele entrega — sem detalhes de implementação.
  */
 import type { JSX } from "react";
+import Link from "next/link";
 import {
   FileUp,
   ScanText,
@@ -14,6 +15,7 @@ import {
   Scale,
   Calculator,
   BookOpen,
+  Sparkles,
 } from "lucide-react";
 
 const PASSOS = [
@@ -197,6 +199,61 @@ export default function InstrucoesPage(): JSX.Element {
             </div>
           ))}
         </div>
+      </section>
+
+      {/* Ajustar o comportamento do assistente (Skills) */}
+      <section className="space-y-4">
+        <h2 className="flex items-center gap-2 text-xl font-semibold text-gray-900">
+          <Sparkles className="h-5 w-5 text-blue-600" /> Ajustar como o assistente
+          trabalha (Skills)
+        </h2>
+        <p className="text-gray-600">
+          O assistente segue um conjunto de{" "}
+          <strong>diretrizes de trabalho</strong> — chamadas de{" "}
+          <strong>Skills</strong> — que dizem, em cada etapa, o que avaliar e como
+          escrever: o que conferir na admissibilidade, como verificar o nexo entre
+          o fato e o desequilíbrio, a estrutura do parecer, o tom da fundamentação,
+          quais cuidados tomar com citações, etc. São, na prática, os{" "}
+          <strong>“manuais” que o assistente consulta</strong> ao conduzir o caso.
+        </p>
+        <p className="text-gray-600">
+          Você pode <strong>ler e editar essas diretrizes</strong> na aba{" "}
+          <Link href="/skills" className="font-medium text-blue-700 hover:underline">
+            Skills
+          </Link>{" "}
+          — assim o assistente passa a trabalhar do jeito que a sua área prefere
+          (por exemplo: exigir um requisito a mais na análise, mudar a ordem das
+          seções do parecer, ajustar a linguagem, reforçar uma checagem).
+        </p>
+        <div className="rounded-lg border border-gray-200 bg-white p-4">
+          <div className="font-medium text-gray-900">Como editar com segurança</div>
+          <ol className="mt-2 ml-4 list-decimal space-y-1.5 text-sm text-gray-600">
+            <li>
+              Abra a aba <strong>Skills</strong> e clique na diretriz que quer
+              ajustar (ex.: <em>“redação da fundamentação jurídica”</em>,{" "}
+              <em>“estrutura do parecer”</em>).
+            </li>
+            <li>
+              Edite o texto em linguagem natural — explique a regra como você
+              explicaria a um assistente humano.
+            </li>
+            <li>
+              <strong>Salvar como candidato</strong>: guarda sua versão como
+              rascunho, <em>sem</em> mudar o que o assistente usa hoje — ótimo
+              para testar com calma. O botão <strong>Comparar</strong> mostra sua
+              versão lado a lado com a atual.
+            </li>
+            <li>
+              <strong>Promover para ativa</strong>: torna a sua versão a que o
+              assistente passa a seguir nas próximas conversas.
+            </li>
+          </ol>
+        </div>
+        <p className="text-sm text-gray-500">
+          Dica: faça ajustes pequenos e um de cada vez, e rode um caso de teste
+          depois — assim fica fácil ver o efeito de cada mudança. Se algo não
+          ficar bom, é só editar de novo e promover a versão corrigida.
+        </p>
       </section>
 
       {/* FAQ */}
