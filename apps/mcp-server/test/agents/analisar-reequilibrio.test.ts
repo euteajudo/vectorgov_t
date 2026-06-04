@@ -39,12 +39,17 @@ const rascunhoValido: PeticaoRascunho = {
   campos_incertos: [],
 };
 
+/** Captura os ids passados a `salvarAnaliseId` (resetado no beforeEach). */
+let savedAnaliseIds: string[] = [];
+
 function nb(rascunho: PeticaoRascunho | null): NotebookAgent {
   return {
     state: { id: { toString: () => "nb" } },
     lerRascunho: async () => rascunho,
     // FSM: a tool analisar_reequilibrio liga o notebook à análise gerada.
-    salvarAnaliseId: async () => {},
+    salvarAnaliseId: async (id: string) => {
+      savedAnaliseIds.push(id);
+    },
   } as unknown as NotebookAgent;
 }
 
@@ -55,6 +60,7 @@ function tool(rascunho: PeticaoRascunho | null, apiKey: string | null) {
 }
 
 beforeEach(() => {
+  savedAnaliseIds = [];
   rodarAnaliseMock.mockReset();
   rodarAnaliseMock.mockResolvedValue({
     analise: {
@@ -115,6 +121,9 @@ describe("tool analisar_reequilibrio", () => {
     expect(r.veredito).toBe("procedente");
     expect(r.citacoes_aprovadas).toBe(1);
     expect(r.peticao_id).toBe("pet-1");
+    // REGRESSÃO: o link do notebook tem que ser `analise.id` (PK do store),
+    // NÃO `peticao_id` — senão `gerar_parecer` não acha a análise.
+    expect(savedAnaliseIds).toEqual(["an-1"]);
   });
 
   it("aplica correcoes sobre o rascunho antes de rodar", async () => {
