@@ -47,6 +47,7 @@ import {
   handleChatWS,
   handleCriarNotebook,
   handleExcluirNotebook,
+  handleGetEstado,
   handleGetNotebook,
   handleListarMensagens,
   handleListarNotebooks,
@@ -235,6 +236,13 @@ async function route(
     /^\/api\/notebooks\/[^/]+\/mensagens$/.test(url.pathname)
   ) {
     return handleListarMensagens(request, env);
+  }
+  // GET /api/notebooks/:id/estado (fase do FSM para a barra de workflow)
+  if (
+    request.method === "GET" &&
+    /^\/api\/notebooks\/[^/]+\/estado$/.test(url.pathname)
+  ) {
+    return handleGetEstado(request, env);
   }
   // GET /api/notebooks/:id
   if (

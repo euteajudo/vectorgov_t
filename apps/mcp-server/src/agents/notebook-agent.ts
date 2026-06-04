@@ -774,11 +774,16 @@ export class NotebookAgent {
         modelo: resultado.modelo,
         tokens_total: resultado.tokens,
       });
+      // Re-deriva a fase APÓS o turno: a conversa pode ter avançado o estado
+      // (ex.: extraiu a petição). A barra de workflow do chat usa isso.
+      const estadoFinal = await this.derivarEstadoConversa();
       sendEvent({
         type: "done",
         message_id: resultado.message_id,
         tokens: resultado.tokens,
         finish_reason: resultado.finish_reason,
+        estado: estadoFinal.estado,
+        veredito: estadoFinal.veredito,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -870,6 +875,12 @@ export class NotebookAgent {
       if (request.method === "GET" && pathname === "/meta") {
         const meta = await this.getMeta();
         return Response.json(meta);
+      }
+      if (request.method === "GET" && pathname === "/estado") {
+        // Fase atual do FSM para a barra de workflow do chat (carga inicial,
+        // antes do 1º turno). Atualizações ao vivo vêm no evento WS "done".
+        const { estado, rascunho, veredito } = await this.derivarEstadoConversa();
+        return Response.json({ estado, rascunho, veredito });
       }
       if (request.method === "POST" && pathname === "/excluir") {
         // Apaga todo o storage do DO (documento, chunks, histórico). O tipo
