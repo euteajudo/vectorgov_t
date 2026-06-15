@@ -19,7 +19,8 @@ import {
   type ToolDescriptor,
 } from "../../mcp-server/src/mcp/tools/types.js";
 
-// As 6 tools de pesquisa — importadas direto dos módulos de origem.
+// As 7 tools de pesquisa — importadas direto dos módulos de origem.
+import { buscarLegislacaoTool } from "../../mcp-server/src/mcp/tools/semantic/buscar-legislacao.js";
 import { buscarCatalogoSemanticoTool } from "../../mcp-server/src/mcp/tools/catalogo/buscar-catalogo-semantico.js";
 import { grepCatalogoTool } from "../../mcp-server/src/mcp/tools/catalogo/grep-catalogo.js";
 import { consultarPrecosPraticadosTool } from "../../mcp-server/src/mcp/tools/precos/consultar-precos-praticados.js";
@@ -28,9 +29,10 @@ import { buscarAcordaosLexicalTool } from "../../mcp-server/src/mcp/tools/semant
 import { listarAcordaosTool } from "../../mcp-server/src/mcp/tools/semantic/listar-acordaos.js";
 
 /**
- * Catálogo dos ALUNOS — ordem: catálogo, preços, acórdãos.
+ * Catálogo dos ALUNOS — ordem: legislação, catálogo, preços, acórdãos.
  */
 const TOOLS: ToolDescriptor[] = [
+  buscarLegislacaoTool,
   buscarCatalogoSemanticoTool,
   grepCatalogoTool,
   consultarPrecosPraticadosTool,

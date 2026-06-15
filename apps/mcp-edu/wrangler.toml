@@ -6,7 +6,8 @@ compatibility_flags = ["nodejs_compat"]
 account_id = "a89dbdb0224cd8d2292cda8a038bc297"
 
 # -----------------------------------------------------------------------------
-# MCP READ-ONLY para os alunos — expõe SOMENTE as 6 tools de pesquisa:
+# MCP READ-ONLY para os alunos — expõe SOMENTE as 7 tools de pesquisa:
+#   • buscar_legislacao                           (leis — híbrido Vectorize+FTS5)
 #   • buscar_catalogo_semantico / grep_catalogo   (CATMAT/CATSER)
 #   • consultar_precos_praticados                 (preços Compras.gov)
 #   • buscar_acordaos_tcu / buscar_acordaos_lexical / listar_acordaos (TCU)
@@ -21,6 +22,11 @@ account_id = "a89dbdb0224cd8d2292cda8a038bc297"
 # Workers AI — embeddings (bge-m3) + rerank (bge-reranker-base).
 [ai]
 binding = "AI"
+
+# Índice semântico das leis (busca híbrida de buscar_legislacao).
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "legislacao-tributaria"
 
 # Índice semântico do catálogo CATMAT/CATSER.
 [[vectorize]]

@@ -1,6 +1,6 @@
 # vectorgov-edu
 
-MCP **read-only** com as 6 tools de **pesquisa** do VectorGov‑T, empacotadas
+MCP **read-only** com as 7 tools de **pesquisa** do VectorGov‑T, empacotadas
 para distribuir aos alunos. Reaproveita a fonte do `@vectorgov-t/mcp-server`
 por import direto — **não há código duplicado**; corrigir uma tool no servidor
 completo corrige aqui também.
@@ -9,6 +9,7 @@ completo corrige aqui também.
 
 | Grupo | Tool | O que faz |
 |---|---|---|
+| Legislação | `buscar_legislacao` | Leis por busca híbrida (Vectorize semântico + FTS5 lexical) |
 | Catálogo | `buscar_catalogo_semantico` | CATMAT/CATSER por similaridade (embed + rerank) |
 | Catálogo | `grep_catalogo` | Busca lexical/exata no catálogo |
 | Preços | `consultar_precos_praticados` | Preços públicos (Compras.gov) + estatísticas |
@@ -24,7 +25,8 @@ Nada de tools de escrita, ingestão, skills, pareceres ou chat.
   `bge-reranker-base`); não passa pelo Gemini/AI Gateway, então `CF_AIG_TOKEN`
   não é necessário.
 - **Read-only.** Aponta para os mesmos índices/bancos de produção
-  (`catmat-catser`, `acordaos-tcu`, `vectorgov-t-db`, `vectorgov-a-db`) apenas
+  (`legislacao-tributaria`, `catmat-catser`, `acordaos-tcu`, `vectorgov-t-db`,
+  `vectorgov-a-db`) apenas
   para leitura.
 - **Superfície mínima.** Sem R2, Durable Objects, service binding de ingestão.
 

@@ -57,6 +57,7 @@ function handleVersion(): Response {
     mcp_protocol: MCP_PROTOCOL_VERSION,
     build_date: BUILD_DATE,
     tools: [
+      "buscar_legislacao",
       "buscar_catalogo_semantico",
       "grep_catalogo",
       "consultar_precos_praticados",
