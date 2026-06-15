@@ -1,0 +1,22 @@
+{
+  "name": "@vectorgov-t/mcp-edu",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP read-only com as 6 tools de pesquisa (CATMAT/CATSER, preços, acórdãos TCU) para distribuição aos alunos. Reaproveita a fonte de @vectorgov-t/mcp-server por import — sem duplicar código.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@vectorgov-t/schemas": "workspace:*",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251201.0",
+    "typescript": "^5.7.0",
+    "wrangler": "^4.59.0"
+  }
+}

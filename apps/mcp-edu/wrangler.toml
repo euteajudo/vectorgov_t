@@ -1,0 +1,56 @@
+name = "vectorgov-edu"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+account_id = "a89dbdb0224cd8d2292cda8a038bc297"
+
+# -----------------------------------------------------------------------------
+# MCP READ-ONLY para os alunos — expõe SOMENTE as 6 tools de pesquisa:
+#   • buscar_catalogo_semantico / grep_catalogo   (CATMAT/CATSER)
+#   • consultar_precos_praticados                 (preços Compras.gov)
+#   • buscar_acordaos_tcu / buscar_acordaos_lexical / listar_acordaos (TCU)
+#
+# Diferente do `vectorgov-t-mcp` (servidor completo), este Worker NÃO usa:
+#   - Gemini / AI Gateway (CF_AIG_TOKEN)  — embeddings/rerank são Workers AI.
+#   - R2 (leis/skills), Durable Objects, pipeline de ingestão, tools de escrita.
+# Logo: nenhum secret é necessário. Aponta para os MESMOS índices/bancos de
+# produção, em modo leitura. Sem auth — proteção é só o rate-limit por IP.
+# -----------------------------------------------------------------------------
+
+# Workers AI — embeddings (bge-m3) + rerank (bge-reranker-base).
+[ai]
+binding = "AI"
+
+# Índice semântico do catálogo CATMAT/CATSER.
+[[vectorize]]
+binding = "VECTORIZE_CATMAT"
+index_name = "catmat-catser"
+
+# Índice semântico dos acórdãos do TCU (populado pelo `vectorgov-a-mcp`).
+[[vectorize]]
+binding = "VECTORIZE_ACORDAOS"
+index_name = "acordaos-tcu"
+
+# D1 do projeto — usado na parte lexical/híbrida da busca de catálogo.
+[[d1_databases]]
+binding = "DB"
+database_name = "vectorgov-t-db"
+database_id = "44068178-9600-42f3-875d-26ce47a11fd4"
+
+# D1 dos acórdãos (vectorgov-a-db, fora deste repo). Read-only — busca lexical
+# FTS5 (buscar_acordaos_lexical) + listagem (listar_acordaos).
+[[d1_databases]]
+binding = "DB_ACORDAOS"
+database_name = "vectorgov-a-db"
+database_id = "1c5359d7-a512-44e7-b781-50df379655aa"
+
+# KV para o rate-limit por IP. Reusa o namespace de produção para deploy
+# imediato; RECOMENDADO criar um dedicado e trocar o id aqui:
+#   wrangler kv namespace create CACHE_EDU
+[[kv_namespaces]]
+binding = "CACHE"
+id = "0b4eaf157c064a51bcbf1d5e87af6f66"
+
+[observability]
+enabled = true
