@@ -3,10 +3,12 @@
  *
  * Rotas:
  *   GET /health
- *   GET /api/catalogo/buscar?q=<termo>&tipo=<material|servico>&modo=<modo>&limit=<n>
+ *   GET /api/catalogo/buscar?q=<termo>&tipo=<material|servico>&modo=<modo>&top_k=<n>
  *
- * `modo`: `semantico` (default, híbrido 3-way + rerank) | `fuzzy` (trigram) |
- *         `grep` (FTS5 full-text). CORS aberto (consumido por vectorgov.io).
+ * `modo`: `hibrido` (default, 3-way + rerank Cohere; `semantico` é alias
+ *         legado) | `fuzzy` (trigram) | `grep` (FTS5 full-text, AND-first).
+ * `top_k` limita o resultado (1-50; `limit` é alias legado). CORS aberto
+ * (consumido por vectorgov.io e pelo proxy do MCP comercial via service binding).
  */
 import type { Env } from "./env.js";
 import { TipoCatalogoSchema } from "@vectorgov-t/schemas";
@@ -43,19 +45,24 @@ async function buscar(request: Request, env: Env): Promise<Response> {
   const tp = tipoRaw ? TipoCatalogoSchema.safeParse(tipoRaw) : null;
   const tipo = tp?.success ? tp.data : undefined;
 
-  const modo = url.searchParams.get("modo") ?? "semantico";
-  const limitRaw = Number.parseInt(url.searchParams.get("limit") ?? "", 10);
-  const limit = Number.isFinite(limitRaw)
-    ? Math.min(Math.max(limitRaw, 1), 50)
+  // "semantico" segue aceito como alias de "hibrido" (consumidores antigos).
+  const modo = url.searchParams.get("modo") ?? "hibrido";
+  // `top_k` é o contrato; `limit` fica como alias legado.
+  const topKRaw = Number.parseInt(
+    url.searchParams.get("top_k") ?? url.searchParams.get("limit") ?? "",
+    10,
+  );
+  const topK = Number.isFinite(topKRaw)
+    ? Math.min(Math.max(topKRaw, 1), 50)
     : 10;
 
   try {
     const resultado =
       modo === "fuzzy"
-        ? await buscarCatalogoFuzzy(env, { padrao: q, tipo, max: limit })
+        ? await buscarCatalogoFuzzy(env, { padrao: q, tipo, max: topK })
         : modo === "grep"
-          ? await grepCatalogo(env, { padrao: q, tipo, max: limit })
-          : await buscarCatalogoHibrido(env, { descricao: q, tipo, top_k: limit });
+          ? await grepCatalogo(env, { padrao: q, tipo, max: topK })
+          : await buscarCatalogoHibrido(env, { descricao: q, tipo, top_k: topK });
     return json(resultado);
   } catch (err) {
     const msg = err instanceof Error ? err.message : "erro na busca";
