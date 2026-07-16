@@ -78,6 +78,12 @@ for (let i = jaFeitos; i < total; i += BATCH) {
           grupo: it.grupo ?? "",
           classe: it.classe ?? "",
           descricao: String(it.descricao).slice(0, META_DESC_MAX),
+          // pdm/ativo/ncm: o motor le meta.pdm (doc do rerank), meta.ativo e
+          // meta.ncm em hits que so vieram da lane semantica — sem eles, item
+          // inativo recuperado via vetor sairia como ativo no response.
+          pdm: String(it.pdm ?? "").slice(0, 120),
+          ativo: it.ativo === 0 ? 0 : 1,
+          ncm: it.ncm ?? "",
         },
       }) + "\n",
     );

@@ -3,9 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "ETL offline do catálogo CATMAT/CATSER: XLSX -> D1 (SQL) + Vectorize (NDJSON via bge-m3).",
+  "description": "ETL offline do catálogo CATMAT/CATSER: CSV oficial + API -> D1 (SQL) + Vectorize (NDJSON via bge-m3).",
   "scripts": {
     "parse": "node --max-old-space-size=4096 parse.mjs",
+    "parse:csv": "node --max-old-space-size=4096 parse-csv.mjs",
+    "fetch:catser": "node fetch-catser.mjs",
     "embed": "node embed.mjs"
   },
   "dependencies": {
