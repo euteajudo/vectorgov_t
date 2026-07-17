@@ -86,9 +86,15 @@ export function createFakeVectorize(opts: {
   byId?: Record<string, { metadata: Record<string, unknown> }>;
   /** Simula falha da lane semântica (trace do inspetor). */
   queryThrows?: boolean;
+  /** Captura o topK pedido — para asserção de overfetch (apenasAtivos). */
+  onTopK?: (topK: number | undefined) => void;
 }): VectorizeIndex {
   const idx = {
-    async query(): Promise<{ matches: unknown[] }> {
+    async query(
+      _vec: number[],
+      qopts?: { topK?: number },
+    ): Promise<{ matches: unknown[] }> {
+      opts.onTopK?.(qopts?.topK);
       if (opts.queryThrows) throw new Error("vectorize indisponível (fake)");
       return { matches: opts.matches ?? [] };
     },

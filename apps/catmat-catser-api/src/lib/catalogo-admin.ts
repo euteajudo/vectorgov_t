@@ -304,13 +304,17 @@ export async function consultarItens(
       cursorBinds.push(c[0], c[1], c[2]);
     }
   }
+  // Busca limit+1 para saber se HÁ próxima página sem gerar cursor para uma
+  // página vazia quando a última enche exatamente (achado P1 da review).
   const sql = `SELECT id, codigo, tipo, descricao, grupo, classe, pdm, ncm, ativo, atualizado_em
     FROM catalogo_itens WHERE ${where}${cursorCond}
     ORDER BY ${orderExpr} LIMIT ?`;
   const { results } = await env.DB.prepare(sql)
-    .bind(...binds, ...cursorBinds, limit)
+    .bind(...binds, ...cursorBinds, limit + 1)
     .all<Record<string, unknown>>();
-  const rows = results ?? [];
+  const buscadas = results ?? [];
+  const temProxima = buscadas.length > limit;
+  const rows = temProxima ? buscadas.slice(0, limit) : buscadas;
 
   const totalRow = await env.DB.prepare(
     `SELECT COUNT(*) AS n FROM (SELECT 1 FROM catalogo_itens WHERE ${where} LIMIT ${TOTAL_CAP + 1})`,
@@ -320,7 +324,7 @@ export async function consultarItens(
   const n = totalRow?.n ?? 0;
 
   let next_cursor: string | null = null;
-  if (rows.length === limit) {
+  if (temProxima && rows.length > 0) {
     const ult = rows[rows.length - 1] as {
       codigo: number;
       tipo: string;
