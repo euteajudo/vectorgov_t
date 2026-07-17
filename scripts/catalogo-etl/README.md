@@ -54,9 +54,25 @@ node fetch-catser.mjs --out ./out
 ```
 Gera `out/catser-d1.sql` e `out/itens-servico.ndjson`.
 
-### 2. D1 — aplicar migrations + importar
+### 2. D1 — aplicar a 0007 + importar
+
+A migration 0007 é aplicada POR ARQUIVO, não por `d1 migrations apply`: o
+`wrangler.toml` da catmat-catser-api deliberadamente não define
+`migrations_dir` (para não puxar as migrations das leis para este banco), e
+rodar o apply da raiz não enxerga `infra/d1-migrations/`. As 0004/0005/0006
+foram aplicadas do mesmo jeito.
 ```
-wrangler d1 migrations apply catmat-catser-db --remote   # inclui a 0007 (ncm/atualizado_em + FTS com pdm)
+wrangler d1 execute catmat-catser-db --remote --file infra/d1-migrations/0007_catalogo_v2.sql
+```
+Aplicar UMA vez: reexecutar falha nos `ALTER TABLE` com
+`duplicate column name: ncm` — esse erro é o sinal (inofensivo) de que a 0007
+já está aplicada. Para conferir sem depender do erro:
+```
+wrangler d1 execute catmat-catser-db --remote --command "SELECT ncm, atualizado_em FROM catalogo_itens LIMIT 1"
+```
+(reclama de coluna inexistente se a 0007 ainda não entrou). Em seguida, a
+carga:
+```
 wrangler d1 execute catmat-catser-db --remote --json --command "SELECT id FROM catalogo_itens" > ./out/ids-antes.json
 wrangler d1 execute catmat-catser-db --remote --file scripts/catalogo-etl/sql/reset-pre-carga.sql
 wrangler d1 execute catmat-catser-db --remote --file ./out/catalogo-d1.sql
