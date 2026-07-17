@@ -25,7 +25,8 @@ const OUT = process.env.OUT_DIR || "./out";
 const ACCOUNT = process.env.CF_ACCOUNT_ID;
 const TOKEN = process.env.CF_API_TOKEN;
 const INDEX = process.env.VECTORIZE_INDEX || "catmat-catser";
-const LOTE = 200;
+// Limite da API delete_by_ids: 100 ids por chamada (erro 40007 acima disso).
+const LOTE = 100;
 
 if (!ACCOUNT || !TOKEN) {
   console.error("Defina CF_ACCOUNT_ID e CF_API_TOKEN.");
