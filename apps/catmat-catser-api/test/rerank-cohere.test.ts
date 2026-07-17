@@ -190,7 +190,7 @@ describe("buscarCatalogoHibrido — rerank Cohere", () => {
     expect(r.itens[0]!.score).toBeCloseTo(0.91);
     // documento do rerank = descricao + (pdm) + classe válida
     const body = corpos[0] as { model: string; documents: string[] };
-    expect(body.model).toBe("rerank-v3.5");
+    expect(body.model).toBe("rerank-v4.0-fast");
     expect(body.documents[0]).toBe(
       "NOTEBOOK PROFISSIONAL 16GB (NOTEBOOK) COMPUTADORES",
     );

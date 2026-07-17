@@ -11,8 +11,11 @@ export interface Env {
   /** Banco dedicado: catalogo_itens + catalogo_fts (unicode61) + catalogo_trgm. */
   DB: D1Database;
   /**
-   * Secret (`wrangler secret put COHERE_API_KEY`) — rerank-v3.5 da Cohere.
+   * Secret (`wrangler secret put COHERE_API_KEY`) — Cohere Rerank
+   * (default rerank-v4.0-fast; modelo sobrescrevível pela var abaixo).
    * Ausente → busca híbrida degrada para ordenação 100% RRF (logado).
    */
   COHERE_API_KEY?: string;
+  /** Var opcional: troca o modelo de rerank sem redeploy (default rerank-v4.0-fast). */
+  COHERE_RERANK_MODEL?: string;
 }

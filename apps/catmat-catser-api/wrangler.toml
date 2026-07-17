@@ -6,7 +6,8 @@ compatibility_flags = ["nodejs_compat"]
 account_id = "a89dbdb0224cd8d2292cda8a038bc297"
 
 # Workers AI — só o embedding (bge-m3) da busca. O rerank NÃO é Workers AI:
-# é Cohere rerank-v3.5 via HTTPS, autenticado pelo secret COHERE_API_KEY
+# é Cohere Rerank via HTTPS (default rerank-v4.0-fast; var opcional
+# COHERE_RERANK_MODEL troca o modelo sem redeploy), secret COHERE_API_KEY
 # (criar com `wrangler secret put COHERE_API_KEY` — nunca hardcode/vars).
 # Sem a key, a busca híbrida degrada para ordenação 100% RRF (logado).
 [ai]

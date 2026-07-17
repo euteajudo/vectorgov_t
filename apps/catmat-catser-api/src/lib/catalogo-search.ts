@@ -3,7 +3,7 @@
  *
  *  - `buscarCatalogoHibrido` (hibrido): embed bge-m3 → Vectorize `catmat-catser`
  *    + FTS5/BM25 + trigram, fundidos por RRF e re-rankeados via Cohere
- *    (rerank-v3.5). Resolve "descrição → código".
+ *    (Cohere rerank-v4.0-fast, configurável). Resolve "descrição → código".
  *  - `grepCatalogo` (lexical): só D1 FTS5/BM25, igual ao `fs_grep` das leis.
  *  - `buscarCatalogoFuzzy` (trigram): substring/tolerante a digitação.
  *
@@ -32,7 +32,10 @@ const EMBEDDING_MODEL = "@cf/baai/bge-m3";
 const PER_RANKER_TOP_K = 20;
 
 const COHERE_RERANK_URL = "https://api.cohere.com/v2/rerank";
-const COHERE_RERANK_MODEL = "rerank-v3.5";
+// Default validado em uso real pelo produto (multilíngue, baixa latência).
+// Sobrescrevível pela var COHERE_RERANK_MODEL (ex.: rerank-v4.0-pro para
+// qualidade máxima, rerank-v3.5 para rollback) — sem redeploy.
+const COHERE_RERANK_MODEL_DEFAULT = "rerank-v4.0-fast";
 const COHERE_TIMEOUT_MS = 4_000;
 /**
  * Corte de relevância aplicado SOMENTE quando o rerank respondeu — o
@@ -284,7 +287,7 @@ export function parseCohereResults(
 }
 
 /**
- * Rerank via Cohere (rerank-v3.5 — multilíngue; o bge-reranker-base do Workers
+ * Rerank via Cohere (rerank-v4.0-fast por default — multilíngue; o bge-reranker-base do Workers
  * AI é en/zh e falhava em PT). Retorna `null` em QUALQUER falha (sem key, HTTP
  * != 2xx, timeout 4s, payload inesperado) — o chamador então ordena 100% por
  * RRF, sem misturar escalas.
@@ -305,7 +308,7 @@ async function rerankCohere(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: COHERE_RERANK_MODEL,
+        model: env.COHERE_RERANK_MODEL?.trim() || COHERE_RERANK_MODEL_DEFAULT,
         query,
         documents: candidatos.map((c) => c.texto),
         top_n: candidatos.length,
