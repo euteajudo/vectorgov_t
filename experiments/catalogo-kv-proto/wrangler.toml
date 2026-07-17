@@ -1,0 +1,20 @@
+# Worker de PROTÓTIPO — isolado, NÃO é produção. Compara latência KV vs D1
+# (mesma query de facetas) de dentro da borda. Descartável.
+name = "catalogo-kv-proto"
+main = "src/index.ts"
+compatibility_date = "2025-05-01"
+account_id = "a89dbdb0224cd8d2292cda8a038bc297"
+
+# KV de teste (namespace criado só para o protótipo).
+[[kv_namespaces]]
+binding = "FACETAS_PROTO"
+id = "acfa454eefd94ccf96c90832c4f68f07"
+
+# MESMO D1 de produção, mas o worker só faz SELECT (read-only de fato).
+[[d1_databases]]
+binding = "DB"
+database_name = "catmat-catser-db"
+database_id = "e361b140-c0c9-4c6b-9aab-b6b4496ef0f9"
+
+[observability]
+enabled = true
