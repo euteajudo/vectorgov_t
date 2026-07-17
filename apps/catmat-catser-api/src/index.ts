@@ -70,8 +70,20 @@ async function buscar(request: Request, env: Env): Promise<Response> {
           : await buscarCatalogoHibrido(env, { descricao: q, tipo, top_k: topK, apenasAtivos });
     return json(resultado);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "erro na busca";
-    return json({ error: `Falha na busca de catálogo: ${msg}` }, 500);
+    // Erro genérico + id de correlação (mesmo padrão das rotas novas); o
+    // detalhe (código/limites do provedor) vai só para o log, nunca ao cliente.
+    const correlacao = crypto.randomUUID();
+    console.error(
+      JSON.stringify({
+        evento: "catalogo_buscar_erro",
+        correlacao,
+        detalhe: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return json(
+      { error: "Falha temporária na busca de catálogo. Tente novamente.", correlacao },
+      500,
+    );
   }
 }
 

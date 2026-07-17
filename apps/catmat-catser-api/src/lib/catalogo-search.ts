@@ -209,9 +209,14 @@ async function queryVectorizeCatalogo(
       "busca semântica de catálogo indisponível: índice 'catmat-catser' (VECTORIZE_CATMAT) não configurado.",
     );
   }
+  // returnMetadata "none": o Vectorize limita topK a 50 com metadata "all",
+  // mas 100 sem — e o overfetch (apenasAtivos) usa topK=80. A metadata do
+  // vetor NÃO é usada (o motor materializa cada hit com a linha FRESCA do D1),
+  // então pedir "none" é correto E destrava o overfetch. Antes, topK=80 +
+  // "all" dava 500 em produção no caminho padrão só-ativos.
   const opts: VectorizeQueryOptions = {
     topK,
-    returnMetadata: "all",
+    returnMetadata: "none",
   };
   if (tipo) opts.filter = { tipo } as VectorizeVectorMetadataFilter;
   const res = await env.VECTORIZE_CATMAT.query(vector, opts);
