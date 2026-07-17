@@ -4,6 +4,53 @@
 > **Data:** 17/07/2026
 > **Decisão pendente:** GO do founder para promover à produção.
 
+---
+
+## 0. Explicação em linguagem simples
+
+**O que é esse KV e para que serve.** KV (Workers KV) é um armazenamento
+chave→valor da Cloudflare que fica **replicado em todos os data centers da
+borda** (os PoPs, no mundo todo). A leitura é quase instantânea (~1 ms) porque
+o dado já está no data center mais perto de quem pediu. A limitação: ele **não
+faz consultas** — você só busca por uma chave exata que já conhece. É uma
+"gaveta" rápida e global, não um banco pesquisável.
+
+No nosso caso, a ideia é usar o KV como **cache das "facetas de topo"** do
+catálogo — as listas de **grupos** (197) e **classes** (748) com as contagens
+de itens. É o "mapa" que um agente consulta para explorar o catálogo ("quais
+categorias existem?"). Esse dado tem três propriedades que o tornam candidato
+perfeito a cache: (1) muda **só uma vez por mês** (no ETL); (2) é **muito
+consultado** (todos veem a mesma lista); (3) é **caro de calcular** no banco.
+
+**Como o teste foi feito.** Montei um **worker de teste isolado**
+(`catalogo-kv-proto`), separado dos workers de produção — nada que os clientes
+usam foi tocado. Esse worker tinha acesso ao **mesmo banco D1** (só leitura) e a
+um **KV de teste** novo. A rota `/seed` calcula as facetas no D1 e grava no KV
+(simulando o que o ETL faria após cada atualização mensal); a rota `/cmp` busca
+**a mesma faceta** das duas fontes (KV e D1), **de dentro da borda** (único
+lugar onde a latência real aparece), mede 5 vezes cada e compara. O ponto justo
+do método: comparei o KV contra **exatamente a mesma query** que a tool
+`navegar` faz hoje no D1 — mesma pergunta, duas formas de responder.
+
+**Resultados atingidos.** Grupos: D1 **1.607 ms** → KV **1 ms**. Classes: D1
+**1.902 ms** → KV **1 ms**. Cada faceta ocupa ~13 KB no KV (minúsculo). As
+medições do D1 foram estáveis (1,4–2,0 s sempre), logo não é ruído — é o custo
+real de agregar 346 mil linhas a cada chamada.
+
+**O que ele resolve** (para as facetas de topo): (a) **latência** 1,6–1,9 s →
+1 ms; (b) **carga no banco** — o D1 calcula a agregação pesada **uma vez por
+mês** (no ETL) em vez de a cada consulta; (c) **sem risco de dado velho** — o
+ETL reescreve o cache exatamente quando os dados mudam. **O que ele NÃO
+resolve** (por isso o escopo é restrito): buscas em linguagem natural
+(`buscar_catalogo` — cauda longa, gargalo é o reranker externo), facetas **com
+filtro** (combinações quase infinitas) e `grep`/`codigo` (já sub-500 ms).
+
+**Em uma frase:** o KV transforma a consulta mais cara e mais repetida do
+catálogo (o mapa de categorias, 1,6–1,9 s no banco) numa leitura de 1 ms na
+borda, atualizada de graça pelo próprio ETL mensal.
+
+---
+
 ## 1. Pergunta
 
 Vale usar Workers KV para deixar dados de catálogo "na borda" e acelerar as
