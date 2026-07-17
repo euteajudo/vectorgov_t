@@ -48,7 +48,9 @@ async function handleGrep(env: Env, url: URL, json: RespostaJson): Promise<Respo
   if (!Number.isInteger(topK) || topK < 1 || topK > GREP_TOP_K_MAX) {
     return json({ error: `top_k deve estar entre 1 e ${GREP_TOP_K_MAX}` }, 400);
   }
-  return json(await grepCatalogoCascata(env, { padrao: q, tipo, max: topK }));
+  // ativo=1 (só vendáveis) quando o chamador pedir; ausente = tudo (neutro).
+  const apenasAtivos = url.searchParams.get("ativo") === "1";
+  return json(await grepCatalogoCascata(env, { padrao: q, tipo, max: topK, apenasAtivos }));
 }
 
 /** Filtros aceitos na rota pública — espelho do contrato do browse admin. */

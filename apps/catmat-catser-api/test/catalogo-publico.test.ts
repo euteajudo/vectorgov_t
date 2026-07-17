@@ -206,6 +206,53 @@ describe("codigo — batch", () => {
   });
 });
 
+describe("filtro apenasAtivos (ativo=1)", () => {
+	it("grep sem ativo=1 NAO filtra (SQL sem c.ativo)", async () => {
+		let sqlVisto = "";
+		const env = envCom([
+			{
+				match: "catalogo_fts",
+				resolver: (sql) => {
+					sqlVisto = sql;
+					return [LINHA(1, "X")];
+				},
+			},
+		]);
+		await publicoRouter(req("grep?q=abc"), env, jsonPublico);
+		expect(sqlVisto).not.toContain("c.ativo = 1");
+	});
+
+	it("grep com ativo=1 injeta c.ativo = 1 no SQL", async () => {
+		let sqlVisto = "";
+		const env = envCom([
+			{
+				match: "catalogo_fts",
+				resolver: (sql) => {
+					sqlVisto = sql;
+					return [LINHA(1, "X")];
+				},
+			},
+		]);
+		await publicoRouter(req("grep?q=abc&ativo=1"), env, jsonPublico);
+		expect(sqlVisto).toContain("c.ativo = 1");
+	});
+
+	it("navegar com ativo=1 filtra itens (WHERE ativo = ?)", async () => {
+		let sqlVisto = "";
+		const env = envCom([
+			{
+				match: "FROM catalogo_itens WHERE",
+				resolver: (sql) => {
+					if (!sql.includes("COUNT(*)")) sqlVisto = sql;
+					return sql.includes("COUNT(*)") ? [{ n: 1 }] : [LINHA(1, "A")];
+				},
+			},
+		]);
+		await publicoRouter(req("navegar?classe=C&ativo=1&limit=5"), env, jsonPublico);
+		expect(sqlVisto).toContain("ativo = ?");
+	});
+});
+
 describe("router", () => {
   it("método não-GET → 405; rota desconhecida → 404", async () => {
     const env = envCom([]);
