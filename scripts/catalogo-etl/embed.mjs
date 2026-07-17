@@ -23,10 +23,14 @@ import {
   readFileSync,
   writeFileSync,
   createWriteStream,
+  createReadStream,
   readdirSync,
   existsSync,
+  renameSync,
+  rmSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
+import { createInterface } from "node:readline";
 
 const OUT = process.env.OUT_DIR || "./out";
 const ACCOUNT = process.env.CF_ACCOUNT_ID;
@@ -43,12 +47,68 @@ if (!ACCOUNT || !TOKEN) {
 
 const URL = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/ai/run/${MODEL}`;
 
-const fonteRaw = readFileSync(`${OUT}/itens.ndjson`, "utf8");
-const hashFonte = createHash("sha256").update(fonteRaw).digest("hex");
-const itens = fonteRaw
-  .split("\n")
-  .filter(Boolean)
-  .map((l) => JSON.parse(l));
+// Shards de 40k vetores passam de 700MB e o limite de string do Node é
+// ~512MB — nenhuma leitura de shard pode usar readFileSync. Foi exatamente
+// esse ERR_STRING_TOO_LONG que derrubou a geração de 16/07/2026 com todos
+// os vetores prontos, e o crash sem flush perdeu a cauda do write stream.
+
+function hashArquivo(caminho) {
+  return new Promise((resolve, reject) => {
+    const h = createHash("sha256");
+    createReadStream(caminho)
+      .on("data", (c) => h.update(c))
+      .on("end", () => resolve(h.digest("hex")))
+      .on("error", reject);
+  });
+}
+
+async function contarLinhas(caminho) {
+  let n = 0;
+  const rl = createInterface({ input: createReadStream(caminho, "utf8"), crlfDelay: Infinity });
+  for await (const l of rl) if (l.trim()) n += 1;
+  return n;
+}
+
+// Valida o último shard linha a linha; linha truncada (crash no meio do
+// write) é descartada regravando só as íntegras num temporário. Retorna a
+// contagem de válidas e o id do último vetor íntegro.
+async function sanearUltimoShard(caminho) {
+  const tmp = `${caminho}.tmp`;
+  const w = createWriteStream(tmp, { encoding: "utf8" });
+  let validas = 0;
+  let truncadas = 0;
+  let ultimoId = null;
+  const rl = createInterface({ input: createReadStream(caminho, "utf8"), crlfDelay: Infinity });
+  for await (const l of rl) {
+    if (!l.trim()) continue;
+    try {
+      ultimoId = JSON.parse(l).id;
+    } catch {
+      truncadas += 1;
+      continue;
+    }
+    validas += 1;
+    if (!w.write(l + "\n")) await new Promise((r) => w.once("drain", r));
+  }
+  await new Promise((res, rej) => w.end((e) => (e ? rej(e) : res())));
+  if (truncadas > 0) {
+    console.warn(`Descartando ${truncadas} linha(s) truncada(s) de ${caminho}.`);
+    renameSync(tmp, caminho);
+  } else {
+    rmSync(tmp);
+  }
+  return { validas, ultimoId };
+}
+
+const hashFonte = await hashArquivo(`${OUT}/itens.ndjson`);
+const itens = [];
+{
+  const rl = createInterface({
+    input: createReadStream(`${OUT}/itens.ndjson`, "utf8"),
+    crlfDelay: Infinity,
+  });
+  for await (const l of rl) if (l.trim()) itens.push(JSON.parse(l));
+}
 
 const nomeArquivo = (n) => `${OUT}/vectors-${String(n).padStart(3, "0")}.ndjson`;
 
@@ -61,27 +121,15 @@ const existentes = readdirSync(OUT)
   .filter((f) => /^vectors-\d{3}\.ndjson$/.test(f))
   .sort();
 let jaFeitos = 0;
+let ultimoIdGerado = null;
 for (let k = 0; k < existentes.length; k++) {
   const caminho = `${OUT}/${existentes[k]}`;
-  const linhas = readFileSync(caminho, "utf8").split("\n").filter(Boolean);
   if (k === existentes.length - 1) {
-    const validas = linhas.filter((l) => {
-      try {
-        JSON.parse(l);
-        return true;
-      } catch {
-        return false;
-      }
-    });
-    if (validas.length !== linhas.length) {
-      console.warn(
-        `Descartando ${linhas.length - validas.length} linha(s) truncada(s) de ${existentes[k]}.`,
-      );
-      writeFileSync(caminho, validas.map((l) => l + "\n").join(""), "utf8");
-    }
-    jaFeitos += validas.length;
+    const { validas, ultimoId } = await sanearUltimoShard(caminho);
+    jaFeitos += validas;
+    ultimoIdGerado = ultimoId;
   } else {
-    jaFeitos += linhas.length;
+    jaFeitos += await contarLinhas(caminho);
   }
 }
 // A retomada por posição só é válida se os shards vieram DESTA fonte — um
@@ -118,9 +166,7 @@ if (existentes.length > 0) {
   );
 }
 if (jaFeitos > 0) {
-  const ultimoShard = `${OUT}/${existentes[existentes.length - 1]}`;
-  const linhasUlt = readFileSync(ultimoShard, "utf8").split("\n").filter(Boolean);
-  const ultimoId = JSON.parse(linhasUlt[linhasUlt.length - 1]).id;
+  const ultimoId = ultimoIdGerado;
   const esperado = itens[jaFeitos - 1]?.id;
   if (ultimoId !== esperado) {
     console.error(
@@ -207,15 +253,16 @@ for (let i = jaFeitos; i < total; i += BATCH) {
   }
   if (i % 2000 === 0) console.log(`  ${Math.min(i + BATCH, total)}/${total}`);
 }
-out.end();
+// Aguarda o flush REAL — out.end() sem await perdeu as 14 últimas linhas
+// quando o processo morreu logo em seguida (16/07/2026).
+await new Promise((res, rej) => out.end((e) => (e ? rej(e) : res())));
 
 const arquivos = readdirSync(OUT)
   .filter((f) => /^vectors-\d{3}\.ndjson$/.test(f))
   .sort();
 console.log(`OK: ${total} vetores em ${arquivos.length} arquivo(s):`);
 for (const f of arquivos) {
-  const n = readFileSync(`${OUT}/${f}`, "utf8").split("\n").filter(Boolean).length;
-  console.log(`  ${f}: ${n}`);
+  console.log(`  ${f}: ${await contarLinhas(`${OUT}/${f}`)}`);
 }
 console.log(
   `Carga: for f in ${OUT}/vectors-*.ndjson; do wrangler vectorize upsert catmat-catser --file "$f"; done`,
