@@ -201,6 +201,49 @@ describe("raio-X do item", () => {
   });
 });
 
+describe("sonda de órfãos no stats (Fase 4)", () => {
+  it("id excluído do D1 mas vivo no índice semântico = órfão confirmado", async () => {
+    const env = envAdmin(
+      [
+        {
+          match: "FROM catalogo_etl_state",
+          rows: [
+            {
+              run_id: "123",
+              executado_em: "2026-07-17T12:00:00Z",
+              tipo: "catalogo",
+              inseridos: 1,
+              atualizados: 2,
+              excluidos: 2,
+              modo: "apply",
+              status: "ok",
+              amostra_exclusoes: '["cat-material-999","cat-servico-1"]',
+            },
+          ],
+        },
+      ],
+      {
+        VECTORIZE_CATMAT: createFakeVectorize({
+          // cat-material-999 ainda existe no índice (órfão); cat-servico-1 não.
+          byId: { "cat-material-999": { metadata: {} } },
+        }),
+      },
+    );
+    const res = await adminRouter(req("stats", { key: KEY }), env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      sonda_orfaos: { amostra: number; orfaos_confirmados: number; exemplos: string[] } | null;
+      etl: { runs: Array<Record<string, unknown>> };
+    };
+    expect(body.sonda_orfaos).not.toBeNull();
+    expect(body.sonda_orfaos!.amostra).toBe(2);
+    expect(body.sonda_orfaos!.orfaos_confirmados).toBe(1);
+    expect(body.sonda_orfaos!.exemplos).toEqual(["cat-material-999"]);
+    // a amostra bruta NÃO vaza na lista de runs
+    expect("amostra_exclusoes" in (body.etl.runs[0] ?? {})).toBe(false);
+  });
+});
+
 describe("lanes (via executor com trace)", () => {
   it("responde requested/effective/pool + public_result + trace", async () => {
     const LINHA = {

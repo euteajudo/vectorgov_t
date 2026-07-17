@@ -199,11 +199,41 @@ async function handleStats(env: Env): Promise<Response> {
   ]);
   // catalogo_etl_state pode não existir antes da 0008 — estado vira null.
   let etl: Record<string, unknown> | null = null;
+  let sondaOrfaos: Record<string, unknown> | null = null;
   try {
     const rows = await q(
-      "SELECT run_id, executado_em, tipo, inseridos, atualizados, excluidos, modo, status FROM catalogo_etl_state ORDER BY executado_em DESC LIMIT 5",
+      "SELECT run_id, executado_em, tipo, inseridos, atualizados, excluidos, modo, status, amostra_exclusoes FROM catalogo_etl_state ORDER BY executado_em DESC LIMIT 5",
     );
-    etl = { runs: rows };
+    etl = {
+      runs: rows.map(({ amostra_exclusoes: _a, ...resto }) => resto),
+    };
+    // Sonda REAL de órfãos (spec §Fase 4): ids excluídos do D1 no último
+    // apply que AINDA existem no índice semântico = órfãos confirmados.
+    const comAmostra = rows.find(
+      (r) =>
+        r.modo === "apply" &&
+        r.status === "ok" &&
+        typeof r.amostra_exclusoes === "string" &&
+        r.amostra_exclusoes.length > 2,
+    );
+    if (comAmostra) {
+      try {
+        const ids = (JSON.parse(String(comAmostra.amostra_exclusoes)) as unknown[])
+          .filter((x): x is string => typeof x === "string")
+          .slice(0, 50);
+        if (ids.length > 0) {
+          const vivos = await env.VECTORIZE_CATMAT.getByIds(ids);
+          sondaOrfaos = {
+            run_id: comAmostra.run_id,
+            amostra: ids.length,
+            orfaos_confirmados: (vivos ?? []).length,
+            exemplos: (vivos ?? []).slice(0, 5).map((v) => v.id),
+          };
+        }
+      } catch {
+        sondaOrfaos = null;
+      }
+    }
   } catch {
     etl = null;
   }
@@ -224,6 +254,7 @@ async function handleStats(env: Env): Promise<Response> {
       ? { valor: vectorCount - itens, indicador_grosseiro: true }
       : null,
     etl,
+    sonda_orfaos: sondaOrfaos,
   });
 }
 
