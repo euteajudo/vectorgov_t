@@ -82,10 +82,23 @@ export function createFakeAi(): FakeAi {
 
 export function createFakeVectorize(opts: {
   matches?: Array<{ id: string; score: number; metadata: Record<string, unknown> }>;
+  /** Vetores devolvidos por getByIds (raio-X do inspetor). */
+  byId?: Record<string, { metadata: Record<string, unknown> }>;
+  /** Simula falha da lane semântica (trace do inspetor). */
+  queryThrows?: boolean;
 }): VectorizeIndex {
   const idx = {
     async query(): Promise<{ matches: unknown[] }> {
+      if (opts.queryThrows) throw new Error("vectorize indisponível (fake)");
       return { matches: opts.matches ?? [] };
+    },
+    async getByIds(ids: string[]): Promise<unknown[]> {
+      return ids
+        .filter((id) => opts.byId?.[id])
+        .map((id) => ({ id, metadata: opts.byId![id]!.metadata }));
+    },
+    async describe(): Promise<unknown> {
+      return { vectorCount: 42, processedUpToDatetime: "2026-07-17T00:00:00Z" };
     },
   };
   return idx as unknown as VectorizeIndex;
@@ -114,5 +127,7 @@ export function createTestEnv(overrides: Partial<Env> = {}): Env {
       unusedBinding("VECTORIZE_CATMAT")) as VectorizeIndex,
     DB: (overrides.DB ?? unusedBinding("DB")) as D1Database,
     COHERE_API_KEY: overrides.COHERE_API_KEY,
+    COHERE_RERANK_MODEL: overrides.COHERE_RERANK_MODEL,
+    CATALOGO_ADMIN_KEY: overrides.CATALOGO_ADMIN_KEY,
   };
 }

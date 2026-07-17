@@ -18,6 +18,7 @@ import {
   grepCatalogo,
 } from "./lib/catalogo-search.js";
 import { conversarCatalogo, type ChatMensagem } from "./lib/chat-engine.js";
+import { adminRouter } from "./lib/catalogo-admin.js";
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -95,6 +96,11 @@ async function chat(request: Request, env: Env): Promise<Response> {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    // Rotas admin do inspetor ANTES do OPTIONS global: sem CORS por design
+    // (consumidor é server-side; OPTIONS → 405 lá dentro).
+    if (url.pathname.startsWith("/api/catalogo/admin/")) {
+      return adminRouter(request, env);
+    }
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders() });
     }

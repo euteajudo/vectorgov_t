@@ -97,6 +97,8 @@ interface FtsResultado {
   rows: CatalogoRow[];
   /** Qual passe serviu a resposta — "and" (query original) ou "or" (expandida). */
   modoFts: "and" | "or";
+  /** Expressão MATCH que serviu a resposta (para o trace do inspetor). */
+  expr: string;
 }
 
 async function execFts(
@@ -148,22 +150,12 @@ async function queryFtsCatalogo(
   limit: number,
 ): Promise<FtsResultado> {
   let modoFts: FtsResultado["modoFts"] = "and";
-  let rows = await execFts(
-    env,
-    "catalogo_fts",
-    sanitizeFts5(padrao, "and"),
-    tipo,
-    limit,
-  );
+  let expr = sanitizeFts5(padrao, "and");
+  let rows = await execFts(env, "catalogo_fts", expr, tipo, limit);
   if (rows.length === 0) {
     modoFts = "or";
-    rows = await execFts(
-      env,
-      "catalogo_fts",
-      sanitizeFts5(expandirQuery(padrao), "or"),
-      tipo,
-      limit,
-    );
+    expr = sanitizeFts5(expandirQuery(padrao), "or");
+    rows = await execFts(env, "catalogo_fts", expr, tipo, limit);
   }
   console.log(
     JSON.stringify({
@@ -173,7 +165,7 @@ async function queryFtsCatalogo(
       query_len: padrao.length,
     }),
   );
-  return { rows, modoFts };
+  return { rows, modoFts, expr };
 }
 
 /**
@@ -342,20 +334,95 @@ function itemFromRow(r: CatalogoRow): ItemCatalogo {
   };
 }
 
-/** Busca híbrida 3-way + rerank Cohere — resolve descrição → código de catálogo. */
+// ============================================================================
+// Trace do inspetor (executor compartilhado — SPEC-LOOP-MONITOR-CATALOGO §2.1)
+// ============================================================================
+
+export interface LaneTrace {
+  status: "ok" | "error" | "timeout" | "skipped";
+  latencia_ms: number;
+  hits: Array<{ rank: number; score: number; id: string }>;
+  causa?: "upstream";
+}
+
+export interface TraceBusca {
+  executed_at: string;
+  query_original: string;
+  query_expandida: string;
+  fts_expr: string;
+  fts_modo: "and" | "or";
+  rrf_k: number;
+  rerank: { modo: "cohere" | "rrf_puro"; modelo: string; threshold: number };
+  indice_semantico?: unknown;
+  lanes: { lexical: LaneTrace; aproximada: LaneTrace; semantica: LaneTrace };
+  fusao: Array<{
+    id: string;
+    rank_por_lane: {
+      lexical: number | null;
+      aproximada: number | null;
+      semantica: number | null;
+    };
+    score_rrf: number;
+    score_rerank: number | null;
+    veredito: "entrou" | "cortado_threshold" | "fora_do_top_k";
+  }>;
+  fusao_parcial: boolean;
+}
+
+async function medirLane<T>(
+  fn: () => Promise<T>,
+): Promise<
+  { ok: true; valor: T; ms: number } | { ok: false; erro: unknown; ms: number }
+> {
+  const t0 = Date.now();
+  try {
+    return { ok: true, valor: await fn(), ms: Date.now() - t0 };
+  } catch (erro) {
+    return { ok: false, erro, ms: Date.now() - t0 };
+  }
+}
+
+/**
+ * Busca híbrida 3-way + rerank Cohere — resolve descrição → código de catálogo.
+ *
+ * Executor compartilhado: a rota pública chama sem `opts` e recebe o payload
+ * de sempre (byte-idêntico — o campo `trace` só existe quando pedido). O
+ * inspetor admin chama com `{trace: true}` e recebe o MESMO resultado do
+ * MESMO run + o trace da execução (paridade por construção). Com trace, uma
+ * lane que falha vira `status: "error"` e a fusão segue parcial; SEM trace,
+ * a falha propaga como sempre propagou (contrato público intocado).
+ */
 export async function buscarCatalogoHibrido(
   env: Env,
   input: { descricao: string; tipo?: TipoCatalogo; top_k: number },
-): Promise<CatalogoBuscaResultado> {
+  opts?: { trace?: boolean },
+): Promise<CatalogoBuscaResultado & { trace?: TraceBusca }> {
+  const comTrace = opts?.trace === true;
+  const executedAt = new Date().toISOString();
   // Sinônimos entram no vetor semântico; a lane FTS aplica a expansão só no
   // fallback OR (AND-first fica na query original — precisão).
   const consultaExpandida = expandirQuery(input.descricao);
   const vector = await embedQuery(env, consultaExpandida);
-  const [vecHits, fts, trgmRows] = await Promise.all([
-    queryVectorizeCatalogo(env, vector, input.tipo),
-    queryFtsCatalogo(env, input.descricao, input.tipo, PER_RANKER_TOP_K),
-    queryTrgmCatalogo(env, input.descricao, input.tipo, PER_RANKER_TOP_K),
+  const [vecR, ftsR, trgmR] = await Promise.all([
+    medirLane(() => queryVectorizeCatalogo(env, vector, input.tipo)),
+    medirLane(() =>
+      queryFtsCatalogo(env, input.descricao, input.tipo, PER_RANKER_TOP_K),
+    ),
+    medirLane(() =>
+      queryTrgmCatalogo(env, input.descricao, input.tipo, PER_RANKER_TOP_K),
+    ),
   ]);
+  if (!comTrace) {
+    // Contrato público: qualquer lane que falhe derruba a busca, como antes.
+    for (const r of [vecR, ftsR, trgmR]) {
+      if (!r.ok) throw r.erro;
+    }
+  }
+  const vecHits = vecR.ok ? vecR.valor : [];
+  const fts: FtsResultado = ftsR.ok
+    ? ftsR.valor
+    : { rows: [], modoFts: "and", expr: "" };
+  const trgmRows = trgmR.ok ? trgmR.valor : [];
   const ftsRows = fts.rows;
 
   // RRF 3-way: semântico (Vectorize) + full-text (FTS5 unicode61) + trigram (fuzzy).
@@ -427,24 +494,34 @@ export async function buscarCatalogoHibrido(
   );
 
   // Ou 100% Cohere (com threshold), ou 100% RRF (degradado) — nunca mistura.
+  // Os conjuntos de veredito (cortados/finais) alimentam só o trace; o payload
+  // público sai das MESMAS operações de antes (filter/sort/slice idênticos).
   let itens: ItemCatalogo[];
   let modoRerank: "cohere" | "rrf_puro";
+  const idsFinais = new Set<string>();
+  const idsCortados = new Set<string>();
   if (rerankScores !== null) {
     modoRerank = "cohere";
-    itens = fused
-      .map((x) => ({ item: x.item, score: rerankScores.get(x.id) }))
+    const pontuados = fused
+      .map((x) => ({ id: x.id, item: x.item, score: rerankScores.get(x.id) }))
       .filter(
-        (x): x is { item: ItemCatalogo; score: number } =>
-          typeof x.score === "number" && x.score >= RERANK_MIN_SCORE,
-      )
+        (x): x is { id: string; item: ItemCatalogo; score: number } =>
+          typeof x.score === "number",
+      );
+    for (const x of pontuados) {
+      if (x.score < RERANK_MIN_SCORE) idsCortados.add(x.id);
+    }
+    const finais = pontuados
+      .filter((x) => x.score >= RERANK_MIN_SCORE)
       .sort((a, b) => b.score - a.score)
-      .slice(0, input.top_k)
-      .map((x) => ({ ...x.item, score: x.score }));
+      .slice(0, input.top_k);
+    for (const x of finais) idsFinais.add(x.id);
+    itens = finais.map((x) => ({ ...x.item, score: x.score }));
   } else {
     modoRerank = "rrf_puro";
-    itens = fused
-      .slice(0, input.top_k)
-      .map((x) => ({ ...x.item, score: x.rrf }));
+    const finais = fused.slice(0, input.top_k);
+    for (const x of finais) idsFinais.add(x.id);
+    itens = finais.map((x) => ({ ...x.item, score: x.rrf }));
   }
 
   console.log(
@@ -456,7 +533,88 @@ export async function buscarCatalogoHibrido(
     }),
   );
 
-  return { modo: "hibrido", total: itens.length, itens };
+  const resultado: CatalogoBuscaResultado & { trace?: TraceBusca } = {
+    modo: "hibrido",
+    total: itens.length,
+    itens,
+  };
+  if (!comTrace) return resultado;
+
+  // ---- montagem do trace (só no caminho do inspetor) ----
+  const rankVec = new Map(vecHits.map((h, i) => [h.id, i + 1] as const));
+  const rankFts = new Map(ftsRows.map((r, i) => [r.catalogo_id, i + 1] as const));
+  const rankTrgm = new Map(
+    trgmRows.map((r, i) => [r.catalogo_id, i + 1] as const),
+  );
+  const lane = (
+    r: { ok: boolean; ms: number },
+    hits: Array<{ rank: number; score: number; id: string }>,
+  ): LaneTrace =>
+    r.ok
+      ? { status: "ok", latencia_ms: r.ms, hits }
+      : { status: "error", latencia_ms: r.ms, hits: [], causa: "upstream" };
+
+  let indiceSemantico: unknown;
+  try {
+    indiceSemantico = await env.VECTORIZE_CATMAT.describe();
+  } catch {
+    indiceSemantico = undefined;
+  }
+
+  resultado.trace = {
+    executed_at: executedAt,
+    query_original: input.descricao,
+    query_expandida: consultaExpandida,
+    fts_expr: fts.expr,
+    fts_modo: fts.modoFts,
+    rrf_k: 60,
+    rerank: {
+      modo: modoRerank,
+      modelo: env.COHERE_RERANK_MODEL?.trim() || COHERE_RERANK_MODEL_DEFAULT,
+      threshold: RERANK_MIN_SCORE,
+    },
+    indice_semantico: indiceSemantico,
+    lanes: {
+      lexical: lane(
+        ftsR,
+        ftsRows.map((r, i) => ({
+          rank: i + 1,
+          score: r.rank ?? 0,
+          id: r.catalogo_id,
+        })),
+      ),
+      aproximada: lane(
+        trgmR,
+        trgmRows.map((r, i) => ({
+          rank: i + 1,
+          score: r.rank ?? 0,
+          id: r.catalogo_id,
+        })),
+      ),
+      semantica: lane(
+        vecR,
+        vecHits.map((h, i) => ({ rank: i + 1, score: h.score, id: h.id })),
+      ),
+    },
+    fusao: fused.map((x) => ({
+      id: x.id,
+      rank_por_lane: {
+        lexical: rankFts.get(x.id) ?? null,
+        aproximada: rankTrgm.get(x.id) ?? null,
+        semantica: rankVec.get(x.id) ?? null,
+      },
+      score_rrf: x.rrf,
+      score_rerank:
+        rerankScores !== null ? (rerankScores.get(x.id) ?? null) : null,
+      veredito: idsFinais.has(x.id)
+        ? "entrou"
+        : idsCortados.has(x.id)
+          ? "cortado_threshold"
+          : "fora_do_top_k",
+    })),
+    fusao_parcial: !vecR.ok || !ftsR.ok || !trgmR.ok,
+  };
+  return resultado;
 }
 
 /** Busca lexical (grep) — só D1 FTS5/BM25 (unicode61), AND-first com fallback OR. */
