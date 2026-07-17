@@ -111,9 +111,27 @@ let totalRegistros = null;
 let pagina = 1;
 let totalPaginas = 1;
 do {
-  const json = await buscarPagina(pagina);
-  totalPaginas = json.totalPaginas ?? totalPaginas;
+  let json = await buscarPagina(pagina);
+  // max: response instável reportando totalPaginas menor não pode encurtar o
+  // fetch (perda silenciosa das páginas finais).
+  totalPaginas = Math.max(totalPaginas, json.totalPaginas ?? 0);
   totalRegistros = json.totalRegistros ?? totalRegistros;
+  // Página 200-mas-incompleta (menos linhas que o pedido, sem erro): mesma
+  // instabilidade que perdeu ~200 serviços no run 29580173104 do CATSER.
+  // Página não-final curta é anômala — re-busca; persistindo, aborta.
+  for (let t = 1; pagina < totalPaginas && (json.resultado ?? []).length < TAMANHO_PAGINA; t++) {
+    const veio = (json.resultado ?? []).length;
+    if (t > 4) {
+      throw new Error(
+        `Página ${pagina} incompleta (${veio}/${TAMANHO_PAGINA}) após 4 re-buscas — fonte instável, abortando.`,
+      );
+    }
+    console.warn(`  página ${pagina} incompleta (${veio}/${TAMANHO_PAGINA}) — re-buscando (${t}/4)`);
+    await new Promise((r) => setTimeout(r, 1000 * 2 ** (t - 1)));
+    json = await buscarPagina(pagina);
+    totalPaginas = Math.max(totalPaginas, json.totalPaginas ?? 0);
+    totalRegistros = json.totalRegistros ?? totalRegistros;
+  }
   const resultado = json.resultado ?? [];
   if (pagina === 1 && resultado.length > 0) {
     const faltando = CAMPOS_OBRIGATORIOS.filter((c) => !(c in resultado[0]));
@@ -179,6 +197,18 @@ if (!emSmokeTest && itens.length < MIN_ITENS) {
       `totalRegistros=${totalRegistros}). Truncamento/paginação quebrada — abortando ` +
       "sem gravar saída. Ajuste CATMAT_MIN_ITENS apenas se o catálogo tiver " +
       "encolhido de verdade.",
+  );
+  process.exit(1);
+}
+
+// Conferência final contra o total anunciado pela API. Tolerância de 250
+// (meia página) absorve mudança legítima do catálogo durante os ~40 min de
+// fetch; acima disso é truncamento — melhor falhar AQUI (barato) do que em
+// "exclusão fantasma" rio abaixo.
+const processadosApi = itens.length + dupes + pulados;
+if (!emSmokeTest && totalRegistros !== null && Math.abs(processadosApi - totalRegistros) > 250) {
+  console.error(
+    `Fonte truncada: processados=${processadosApi} vs totalRegistros=${totalRegistros} — abortando sem gravar saída.`,
   );
   process.exit(1);
 }
