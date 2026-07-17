@@ -155,12 +155,48 @@ test("confirmarExclusoes: detecta exclusão fantasma", async () => {
     const chave = Object.keys(respostas).find((k) => url.includes(k));
     return { ok: true, status: 200, json: async () => respostas[chave] ?? { resultado: [] } };
   };
-  const { conferidos, aindaExistem } = await confirmarExclusoes(
+  const { conferidos, aindaExistem, naoConfirmados } = await confirmarExclusoes(
     ["cat-material-111", "cat-servico-22"],
     { fetchImpl, pausaMs: 0 },
   );
   assert.equal(conferidos, 2);
   assert.deepEqual(aindaExistem, ["cat-material-111"]);
+  assert.deepEqual(naoConfirmados, []);
+});
+
+test("confirmarExclusoes: API instável não derruba o ciclo — item vai em naoConfirmados", async () => {
+  const fetchImpl = async (url) => {
+    if (url.includes("codigoServico=24090")) return { ok: false, status: 503 };
+    return { ok: true, status: 200, json: async () => ({ resultado: [] }) };
+  };
+  const { conferidos, aindaExistem, naoConfirmados } = await confirmarExclusoes(
+    ["cat-material-1", "cat-servico-24090", "cat-material-2"],
+    { fetchImpl, pausaMs: 0, backoffMs: 0 },
+  );
+  assert.equal(conferidos, 3);
+  assert.deepEqual(aindaExistem, []);
+  // O 503 persistente não vira throw: o item fica sem exclusão nesta rodada
+  // e os demais continuam sendo conferidos normalmente.
+  assert.deepEqual(naoConfirmados, ["cat-servico-24090"]);
+});
+
+test("confirmarExclusoes: circuit breaker — 5 falhas seguidas param de martelar a API", async () => {
+  let chamadas = 0;
+  const fetchImpl = async () => {
+    chamadas += 1;
+    return { ok: false, status: 500 };
+  };
+  const ids = Array.from({ length: 8 }, (_, k) => `cat-material-${k + 1}`);
+  const { aindaExistem, naoConfirmados } = await confirmarExclusoes(ids, {
+    fetchImpl,
+    pausaMs: 0,
+    backoffMs: 0,
+  });
+  assert.deepEqual(aindaExistem, []);
+  // Todos ficam sem exclusão: 5 conferidos com falha + 3 restantes herdados.
+  assert.deepEqual(naoConfirmados, ids);
+  // Só os 5 primeiros geraram chamadas (6 tentativas cada); os 3 restantes não.
+  assert.equal(chamadas, 5 * 6);
 });
 
 test("lerLinhasD1: formato do wrangler --json e success=false", () => {
