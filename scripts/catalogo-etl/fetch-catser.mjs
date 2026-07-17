@@ -95,9 +95,31 @@ function flushLote() {
 
 let pagina = 1;
 let totalPaginas = 1;
+let totalRegistros = null;
 do {
-  const json = await buscarPagina(pagina);
-  totalPaginas = json.totalPaginas ?? totalPaginas;
+  let json = await buscarPagina(pagina);
+  // max: um response instável reportando totalPaginas menor não pode encurtar
+  // o fetch (perda silenciosa de páginas finais).
+  totalPaginas = Math.max(totalPaginas, json.totalPaginas ?? 0);
+  totalRegistros = json.totalRegistros ?? totalRegistros;
+  // Página 200-mas-incompleta: o backend instável devolve MENOS linhas que o
+  // tamanho pedido sem erro nenhum — foi assim que o run 29580173104 perdeu
+  // ~200 serviços e gerou 132 "exclusões fantasma". Página não-final curta é
+  // anômala (blocos fixos de TAMANHO_PAGINA): re-busca; persistindo, aborta o
+  // fetch (barato) antes de gastar confirmação/embed rio abaixo.
+  for (let t = 1; pagina < totalPaginas && (json.resultado ?? []).length < TAMANHO_PAGINA; t++) {
+    const veio = (json.resultado ?? []).length;
+    if (t > 4) {
+      throw new Error(
+        `Página ${pagina} incompleta (${veio}/${TAMANHO_PAGINA}) após 4 re-buscas — fonte instável, abortando.`,
+      );
+    }
+    console.warn(`  página ${pagina} incompleta (${veio}/${TAMANHO_PAGINA}) — re-buscando (${t}/4)`);
+    await new Promise((r) => setTimeout(r, 1000 * 2 ** (t - 1)));
+    json = await buscarPagina(pagina);
+    totalPaginas = Math.max(totalPaginas, json.totalPaginas ?? 0);
+    totalRegistros = json.totalRegistros ?? totalRegistros;
+  }
   const resultado = json.resultado ?? [];
   for (const r of resultado) {
     const codigo = Number(r.codigoServico);
@@ -144,7 +166,31 @@ flushLote();
 ndjson.end();
 sql.end();
 
+// Conferência final contra o total anunciado pela API. Tolerância de 250
+// (meia página) absorve mudança legítima do catálogo no meio do fetch;
+// acima disso é truncamento — aborta para o workflow falhar AQUI, não em
+// "exclusão fantasma" depois de minutos de conferência.
+const processados = gravados + dupes + pulados;
+if (totalRegistros !== null && Math.abs(processados - totalRegistros) > 250) {
+  console.error(
+    `Fonte truncada: processados=${processados} vs totalRegistros=${totalRegistros} — abortando.`,
+  );
+  process.exit(1);
+}
+
 console.log(
   "RESUMO:",
-  JSON.stringify({ gravados, ativos, inativos: gravados - ativos, dupes, pulados, saida: OUT }, null, 2),
+  JSON.stringify(
+    {
+      gravados,
+      ativos,
+      inativos: gravados - ativos,
+      dupes,
+      pulados,
+      totalRegistrosApi: totalRegistros,
+      saida: OUT,
+    },
+    null,
+    2,
+  ),
 );
