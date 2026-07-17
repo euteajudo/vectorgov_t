@@ -7,8 +7,11 @@
   "scripts": {
     "parse": "node --max-old-space-size=4096 parse.mjs",
     "parse:csv": "node --max-old-space-size=4096 parse-csv.mjs",
+    "fetch:catmat": "node --max-old-space-size=4096 fetch-catmat.mjs",
     "fetch:catser": "node fetch-catser.mjs",
-    "embed": "node embed.mjs"
+    "delta": "node --max-old-space-size=4096 delta.mjs",
+    "embed": "node embed.mjs",
+    "test": "node --test delta.test.mjs"
   },
   "dependencies": {
     "xlsx": "0.18.5"
