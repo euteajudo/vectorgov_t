@@ -19,6 +19,7 @@ import {
 } from "./lib/catalogo-search.js";
 import { conversarCatalogo, type ChatMensagem } from "./lib/chat-engine.js";
 import { adminRouter } from "./lib/catalogo-admin.js";
+import { publicoRouter } from "./lib/catalogo-publico.js";
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -109,6 +110,15 @@ export default {
     }
     if (request.method === "GET" && url.pathname === "/api/catalogo/buscar") {
       return buscar(request, env);
+    }
+    // Rotas públicas das tools do MCP comercial (grep/navegar/codigo) —
+    // mesmo envelope/CORS do /buscar (SPEC-LOOP-TOOLS-CATALOGO-MCP §2).
+    if (
+      url.pathname === "/api/catalogo/grep" ||
+      url.pathname === "/api/catalogo/navegar" ||
+      url.pathname === "/api/catalogo/codigo"
+    ) {
+      return publicoRouter(request, env, json);
     }
     if (request.method === "POST" && url.pathname === "/api/catalogo/chat") {
       return chat(request, env);

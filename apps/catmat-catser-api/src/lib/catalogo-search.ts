@@ -626,6 +626,35 @@ export async function grepCatalogo(
   return { modo: "grep", total: rows.length, itens: rows.map(itemFromRow) };
 }
 
+/**
+ * Grep em cascata SINALIZADA (tool `grep_catalogo` do MCP comercial —
+ * SPEC-LOOP-TOOLS-CATALOGO-MCP §2): full-text AND (precisão) → OR expandido
+ * (recall) → aproximada por substring (typo/parcial). O campo `modo_busca`
+ * diz ao agente o quão literal foi o match — "exata" | "ampla" |
+ * "aproximada" — em vez de uma tool separada por nível.
+ */
+export async function grepCatalogoCascata(
+  env: Env,
+  input: { padrao: string; tipo?: TipoCatalogo; max: number },
+): Promise<CatalogoBuscaResultado & { modo_busca: "exata" | "ampla" | "aproximada" }> {
+  const fts = await queryFtsCatalogo(env, input.padrao, input.tipo, input.max);
+  if (fts.rows.length > 0) {
+    return {
+      modo: "grep",
+      modo_busca: fts.modoFts === "and" ? "exata" : "ampla",
+      total: fts.rows.length,
+      itens: fts.rows.map(itemFromRow),
+    };
+  }
+  const trgmRows = await queryTrgmCatalogo(env, input.padrao, input.tipo, input.max);
+  return {
+    modo: "grep",
+    modo_busca: "aproximada",
+    total: trgmRows.length,
+    itens: trgmRows.map(itemFromRow),
+  };
+}
+
 /** Busca fuzzy (FTS5 trigram) — tolerante a digitação/substring, sem embedding. */
 export async function buscarCatalogoFuzzy(
   env: Env,
