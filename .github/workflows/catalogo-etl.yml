@@ -244,6 +244,36 @@ jobs:
                "D1 ja esta consistente; re-executar o upsert dos shards (artifact) ou aguardar e conferir 'wrangler vectorize info'."
           exit 1
 
+      - name: Registra estado do ciclo no D1 (todo desfecho — banner do inspetor)
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          # Grava em catalogo_etl_state (migration 0008) o desfecho do ciclo —
+          # inclusive falhas e gates reprovados (o banner vermelho do inspetor
+          # depende disto). Se a migration não estiver aplicada, avisa e segue.
+          node -e "
+            const fs = require('fs');
+            const rel = fs.existsSync('out/delta/relatorio.json')
+              ? JSON.parse(fs.readFileSync('out/delta/relatorio.json', 'utf8'))
+              : null;
+            const gates = rel && Array.isArray(rel.gates_reprovados) && rel.gates_reprovados.length > 0;
+            const status = process.env.JOB_STATUS === 'success' ? 'ok' : gates ? 'gates_reprovados' : 'falhou';
+            let amostra = null;
+            if (fs.existsSync('out/delta/orfaos.json')) {
+              try { amostra = JSON.stringify(JSON.parse(fs.readFileSync('out/delta/orfaos.json', 'utf8')).slice(0, 50)); } catch {}
+            }
+            const esc = (v) => v === null ? 'NULL' : \"'\" + String(v).replace(/'/g, \"''\") + \"'\";
+            const sql = 'INSERT OR REPLACE INTO catalogo_etl_state (run_id, executado_em, tipo, inseridos, atualizados, excluidos, modo, status, amostra_exclusoes) VALUES (' +
+              [esc(process.env.RUN_ID), esc(new Date().toISOString()), esc('catalogo'),
+               rel ? rel.novos|0 : 0, rel ? ((rel.alterados_vetor|0)+(rel.alterados_data|0)) : 0, rel ? rel.excluidos|0 : 0,
+               esc(process.env.MODE), esc(status), esc(amostra)].join(',') + ');';
+            fs.writeFileSync('out/etl_state.sql', sql + '\n');
+          "
+          $WRANGLER d1 execute "$D1_DB" --remote --file out/etl_state.sql \
+            || echo "aviso: estado do ciclo não gravado (migration 0008 ausente?) — não bloqueia"
+
       - name: Notifica (webhook opcional)
         if: always() && (failure() || (env.MODE == 'apply' && steps.delta.outputs.tem_mudancas == 'true'))
         env:
