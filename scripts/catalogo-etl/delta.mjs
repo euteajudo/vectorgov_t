@@ -437,31 +437,40 @@ async function main() {
     const { conferidos, aindaExistem, naoConfirmados } = await confirmarExclusoes(
       plano.excluidos,
     );
-    if (aindaExistem.length > 0) {
-      console.error(
-        `Exclusão fantasma: ${aindaExistem.length}/${conferidos} itens "excluídos" ` +
-          `ainda existem na API (ex.: ${aindaExistem.slice(0, 5).join(", ")}). ` +
-          "O catálogo mudou durante o fetch — re-rode o workflow (o fetch é gratuito).",
-      );
-      process.exit(3);
-    }
-    if (naoConfirmados.length > 0) {
-      // Ausência não confirmada ≠ ausência: ficam no índice nesta rodada e
-      // voltam ao plano no próximo ciclo. O relatório é regravado para o gate
-      // de contagem do workflow conferir contra o que será aplicado de fato.
-      const fora = new Set(naoConfirmados);
-      plano.excluidos = plano.excluidos.filter((id) => !fora.has(id));
+    // A listagem do dadosabertos pagina sobre ordenação INSTÁVEL: as
+    // fronteiras de página deslizam entre requests e ~130-230 itens somem do
+    // fetch a cada rodada (conjunto DIFERENTE por rodada; páginas completas e
+    // total batendo — runs 29578981347/29580173104/29581506510, 3 rodadas
+    // 100% fantasma em cat-servico-*). "Re-rodar o fetch" nunca converge.
+    // A consulta unitária é o oráculo: item confirmado VIVO sai do plano de
+    // exclusão e permanece no índice — junto com os inconfirmáveis. Exclusão
+    // só com ausência confirmada.
+    const manter = new Set([...aindaExistem, ...naoConfirmados]);
+    if (manter.size > 0) {
+      // O relatório é regravado para o gate de contagem do workflow conferir
+      // contra o que será aplicado de fato.
+      plano.excluidos = plano.excluidos.filter((id) => !manter.has(id));
       rel.excluidos = plano.excluidos.length;
+      rel.exclusoes_fantasma_mantidas = aindaExistem.length;
       rel.exclusoes_nao_confirmadas = naoConfirmados.length;
       rel.itens_esperados_apos_apply =
         plano.totalD1 + plano.novos.length - plano.excluidos.length;
       writeFileSync(`${OUT}/relatorio.json`, JSON.stringify(rel, null, 2) + "\n", "utf8");
       writeFileSync(`${OUT}/relatorio.md`, gerarRelatorioMd(rel), "utf8");
-      console.warn(
-        `Aviso: ${naoConfirmados.length} exclusão(ões) sem confirmação (API unitária ` +
-          `instável; ex.: ${naoConfirmados.slice(0, 5).join(", ")}) — mantidas no índice ` +
-          "nesta rodada.",
-      );
+      if (aindaExistem.length > 0) {
+        console.warn(
+          `Aviso: ${aindaExistem.length}/${conferidos} "excluídos" ainda existem na API ` +
+            `unitária (paginação instável da listagem; ex.: ${aindaExistem.slice(0, 5).join(", ")}) ` +
+            "— mantidos no índice.",
+        );
+      }
+      if (naoConfirmados.length > 0) {
+        console.warn(
+          `Aviso: ${naoConfirmados.length} exclusão(ões) sem confirmação (API unitária ` +
+            `instável; ex.: ${naoConfirmados.slice(0, 5).join(", ")}) — mantidas no índice ` +
+            "nesta rodada.",
+        );
+      }
     }
     console.log(
       `OK: ${conferidos} conferências; ${plano.excluidos.length} exclusões seguem no plano.`,
