@@ -1,4 +1,17 @@
-# catalogo-kv-proto (PROTÓTIPO — não é produção)
+# catalogo-kv-proto (PROTÓTIPO — RETIRADO DO AR)
+
+> **⚠️ Retirado do ar em 17/07/2026** (worker deletado + KV de teste deletado),
+> após review. Mantido no repo só como registro histórico. **Limitações de
+> método** (não re-publicar sem corrigir): (1) o `/cmp` mede latência, **não
+> compara o conteúdo** KV×D1; (2) força `ativo=1`, que **não** é o contrato
+> "sem filtro" do `/navegar`; (3) "1 ms" é **mediana quente num PoP**, não
+> latência global; (4) as rotas **não têm auth** e o binding aponta para o D1 de
+> produção — cada `/cmp` dispara 10 agregações caras. Ver
+> [`docs/design/catalogo-kv-facetas.md`](../../docs/design/catalogo-kv-facetas.md) §1.
+
+---
+
+## Descrição original
 
 Worker **descartável** que mede a latência de servir as **facetas de topo** do
 catálogo (`dim=grupo` / `dim=classe`) por **Workers KV** vs pela **mesma query

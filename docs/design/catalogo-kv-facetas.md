@@ -1,142 +1,169 @@
-# Design — Facetas de topo do catálogo na borda (Workers KV via ETL)
+# Design — Facetas de topo do catálogo: materializar no D1 (e talvez KV depois)
 
-> **Status:** PROPOSTA para análise (protótipo medido; nada em produção).
+> **Status:** PROPOSTA para análise (v2, após review — request changes).
 > **Data:** 17/07/2026
-> **Decisão pendente:** GO do founder para promover à produção.
+> **Protótipo:** RETIRADO DO AR (worker `catalogo-kv-proto` e KV de teste
+> deletados em 17/07 — ver §9).
+> **Decisão pendente:** GO do founder para a Fase A (tabela materializada).
 
 ---
 
 ## 0. Explicação em linguagem simples
 
-**O que é esse KV e para que serve.** KV (Workers KV) é um armazenamento
-chave→valor da Cloudflare que fica **replicado em todos os data centers da
-borda** (os PoPs, no mundo todo). A leitura é quase instantânea (~1 ms) porque
-o dado já está no data center mais perto de quem pediu. A limitação: ele **não
-faz consultas** — você só busca por uma chave exata que já conhece. É uma
-"gaveta" rápida e global, não um banco pesquisável.
+**O problema.** As "facetas de topo" do catálogo — as listas de **grupos**
+(197) e **classes** (748) com contagens — são o "mapa" que o agente usa para
+explorar o catálogo. Calcular isso é um `GROUP BY` + `COUNT(DISTINCT)` sobre
+**346 mil linhas**, e isso custa **1,6–1,9 s por chamada** no D1. É uma
+consulta cara e muito repetida, mas o dado só muda **1×/mês** (no ETL).
 
-No nosso caso, a ideia é usar o KV como **cache das "facetas de topo"** do
-catálogo — as listas de **grupos** (197) e **classes** (748) com as contagens
-de itens. É o "mapa" que um agente consulta para explorar o catálogo ("quais
-categorias existem?"). Esse dado tem três propriedades que o tornam candidato
-perfeito a cache: (1) muda **só uma vez por mês** (no ETL); (2) é **muito
-consultado** (todos veem a mesma lista); (3) é **caro de calcular** no banco.
+**A ideia.** Pré-computar essas listas quando o catálogo muda (no ETL) e servir
+o resultado pronto, em vez de recalcular a agregação a cada consulta.
 
-**Como o teste foi feito.** Montei um **worker de teste isolado**
-(`catalogo-kv-proto`), separado dos workers de produção — nada que os clientes
-usam foi tocado. Esse worker tinha acesso ao **mesmo banco D1** (só leitura) e a
-um **KV de teste** novo. A rota `/seed` calcula as facetas no D1 e grava no KV
-(simulando o que o ETL faria após cada atualização mensal); a rota `/cmp` busca
-**a mesma faceta** das duas fontes (KV e D1), **de dentro da borda** (único
-lugar onde a latência real aparece), mede 5 vezes cada e compara. O ponto justo
-do método: comparei o KV contra **exatamente a mesma query** que a tool
-`navegar` faz hoje no D1 — mesma pergunta, duas formas de responder.
-
-**Resultados atingidos.** Grupos: D1 **1.607 ms** → KV **1 ms**. Classes: D1
-**1.902 ms** → KV **1 ms**. Cada faceta ocupa ~13 KB no KV (minúsculo). As
-medições do D1 foram estáveis (1,4–2,0 s sempre), logo não é ruído — é o custo
-real de agregar 346 mil linhas a cada chamada.
-
-**O que ele resolve** (para as facetas de topo): (a) **latência** 1,6–1,9 s →
-1 ms; (b) **carga no banco** — o D1 calcula a agregação pesada **uma vez por
-mês** (no ETL) em vez de a cada consulta; (c) **sem risco de dado velho** — o
-ETL reescreve o cache exatamente quando os dados mudam. **O que ele NÃO
-resolve** (por isso o escopo é restrito): buscas em linguagem natural
-(`buscar_catalogo` — cauda longa, gargalo é o reranker externo), facetas **com
-filtro** (combinações quase infinitas) e `grep`/`codigo` (já sub-500 ms).
-
-**Em uma frase:** o KV transforma a consulta mais cara e mais repetida do
-catálogo (o mapa de categorias, 1,6–1,9 s no banco) numa leitura de 1 ms na
-borda, atualizada de graça pelo próprio ETL mensal.
+**A correção de rota desta v2.** A v1 propunha ir direto para **KV** (cache na
+borda da Cloudflare). A review mostrou que o caminho mais seguro é primeiro
+**materializar as facetas numa tabela do próprio D1**, atualizada **junto com o
+catálogo, na mesma transação**. Isso mata o custo de 1,6–1,9 s com
+**consistência forte** (o número nunca fica velho, porque muda junto com os
+dados) e complexidade baixa. **KV vira uma segunda camada opcional**, só se a
+latência da tabela ainda justificar — e com salvaguardas que a v1 não tinha.
 
 ---
 
-## 1. Pergunta
+## 1. O que o protótipo mediu — e o que NÃO mediu
 
-Vale usar Workers KV para deixar dados de catálogo "na borda" e acelerar as
-pesquisas? Resposta curta do protótipo: **para as facetas de topo, sim, com
-folga; para o resto, não.**
+O protótipo isolado (`experiments/catalogo-kv-proto`, já retirado do ar) comparou
+`KV.get` vs a agregação D1, de dentro da borda:
 
-## 2. O que KV é (e não é)
+| Faceta | D1 (agregação ao vivo) | KV | Tamanho |
+|---|---|---|---|
+| `dim=grupo` (197) | ~1.607 ms (mediana quente) | ~1 ms (mediana quente) | 13 KB |
+| `dim=classe` (748) | ~1.902 ms (mediana quente) | ~1 ms (mediana quente) | 12 KB |
 
-KV = chave→valor replicado nos PoPs, leitura ~1 ms na borda, escrita eventual
-(~60 s de propagação), TTL configurável. Bom para **respostas pré-computadas de
-chaves conhecidas**. **Não é query-able** — não substitui o D1 para FTS,
-facetas com filtro dinâmico ou keyset.
+**Ressalvas honestas (achados da review) — o protótipo NÃO prova:**
+- **Equivalência/correção** (achado #1): o `/cmp` mediu só latência, tamanho e
+  `hit`; **não** comparava o conteúdo do KV com o do D1. Um KV com lixo ou dado
+  do mês anterior "passaria" no benchmark. Logo, o número comprova **latência de
+  leitura**, não que o cache está certo.
+- **A mesma query do contrato** (achado #2): o protótipo força `ativo = 1`, mas
+  o `/navegar` hoje trata `ativo` ausente como **"tudo"**. São contagens
+  diferentes.
+- **Latência global** (achado #5): "1 ms" é **mediana quente num único PoP**
+  (5 leituras seguidas aquecem o cache local). O KV **não** replica cada valor
+  para todos os PoPs de antemão — a primeira leitura num PoP frio é mais lenta.
+  O ganho é real e grande, mas o rótulo correto é "mediana quente naquele PoP",
+  não "latência global garantida".
 
-## 3. Método
+**O que fica de sólido:** a agregação D1 custa mesmo ~1,6–1,9 s (5 amostras
+estáveis) — logo, **pré-computar vale a pena**. É *como* pré-computar que a v2
+revê.
 
-Protótipo isolado ([`experiments/catalogo-kv-proto`](../../experiments/catalogo-kv-proto)):
-um worker de teste com binding ao KV de teste e ao **mesmo D1** (só `SELECT`).
-A `/cmp` mede, de dentro da borda, `KV.get` vs a **mesma** query de facetas do
-`/navegar` (`GROUP BY <dim>` + `COUNT(DISTINCT)` sobre `catalogo_itens`, default
-só-ativos), 5 amostras cada. Nenhum worker de produção foi tocado.
+---
 
-## 4. Resultados (produção, 17/07)
+## 2. Fase A (recomendada) — tabela materializada no D1
 
-| Faceta | D1 (GROUP BY ao vivo) | KV | Ganho | Tamanho no KV |
-|---|---|---|---|---|
-| `dim=grupo` (197 grupos) | **1.607 ms** (mediana) | **1 ms** | −1.606 ms | 13 KB |
-| `dim=classe` (200 de 748) | **1.902 ms** (mediana) | **1 ms** | −1.901 ms | 12 KB |
+Uma tabela `catalogo_facetas(dim, valor, n, escopo, etl_run_id)` preenchida
+**na mesma carga** que atualiza `catalogo_itens`:
 
-Amostras D1 estáveis (grupo: 1608/1566/1651/1607/1455; classe:
-1924/1902/1722/1975/1684) — não é ruído, é o custo real da agregação global.
+- **Atômica e consistente:** as facetas são regravadas na transação do apply do
+  catálogo. Nunca há janela em que os itens mudaram e as facetas não —
+  consistência forte, sem o staleness que o KV tem.
+- **Escopo explícito** (achado #2): materializar por escopo — `escopo='active'`
+  (só ativos, o default das tools) e, se quiser, `escopo='all'`. A leitura casa
+  o escopo exato; nada de uma chave `all` servir contagem de `active`.
+- **Barata de servir:** `SELECT ... FROM catalogo_facetas WHERE dim=? AND
+  escopo=?` é um índice-scan de ~200 linhas — milissegundos, sem `GROUP BY`
+  sobre 346 k.
+- **Complexidade baixa:** +1 tabela, +1 passo no ETL (dentro da transação),
+  `navegar` sem filtro lê a tabela. Sem serviço novo, sem cache para invalidar.
 
-## 5. Análise
+Isso sozinho deve derrubar 1,6–1,9 s → poucos ms, com consistência forte. É o
+que o GO desta v2 pede.
 
-- **Correção de uma estimativa anterior:** eu havia dito que "navegar é
-  sub-500 ms". Isso vale para o **browse de itens filtrados** (índice + keyset +
-  limit). As **facetas de topo** (`GROUP BY` + `COUNT(DISTINCT)` global sobre
-  346 k linhas) custam **1,6–1,9 s** — subestimado.
-- **O ganho não é só "latência de borda":** é **não recomputar** uma query
-  pesada a cada chamada, e **tirar essa carga do D1**. Vale independentemente da
-  geografia (a query é intrinsecamente cara).
-- **Casamento ideal com o ETL:** essas facetas mudam **só no apply mensal**, são
-  o "mapa de navegação" que o agente consulta com frequência (alto reuso), e a
-  invalidação é trivial — o ETL faz o *write-through* no fim do apply (o `/seed`
-  do protótipo é exatamente isso). Sem TTL adivinhado; sem staleness surpresa.
+---
 
-## 6. Escopo (onde vale e onde NÃO vale)
+## 3. Fase B (opcional, só se a Fase A não bastar) — KV como 2ª camada
 
-| Caso | KV? | Motivo |
+Se, após a Fase A, a latência de leitura ainda justificar empurrar para a borda,
+KV entra **com as salvaguardas que faltavam na v1**:
+
+1. **Chave imutável por `etl_run_id`** (achado #3): `facetas:active:grupo:<run>`.
+   Nunca se sobrescreve uma chave — cada ciclo publica chave nova e o
+   `navegar` lê a chave do run corrente (ponteiro atualizado atomicamente). Um
+   valor velho nunca é servido como se fosse novo.
+2. **Publicação DEPOIS do gate final do ETL** (achado #3): o `catalogo-etl.yml`
+   muda o D1 **antes** do gate de contagem/Vectorize. O write no KV só ocorre
+   **após** todos os gates passarem — se um gate falha, nada é publicado.
+3. **Escopo explícito na chave** (`active`) (achado #2).
+4. **Payload versionado + validação de schema na leitura** (achado #1): a
+   leitura faz `JSON.parse`, confere versão e forma; **qualquer** falha (miss,
+   corrupção, versão/escopo errado) → **fallback ao D1** (agora barato, via
+   tabela da Fase A).
+5. **Staleness documentado, não negado** (achados #3, #5): a doc oficial do KV
+   diz que valores anteriores podem ficar visíveis ~60 s ou mais. Como usamos
+   chave imutável por run, o efeito é "o novo run demora alguns segundos para
+   ficar global", não "serve dado errado". **Não prometemos zero staleness.**
+
+Correção explícita das frases da v1 que a review apontou: ~~"sem risco de dado
+velho"~~ e ~~"nunca serve dado errado"~~ estavam erradas — a garantia real vem
+da **Fase A (D1, consistência forte)**; o KV é otimização com staleness
+eventual e fallback.
+
+---
+
+## 4. Escopo (onde vale e onde NÃO vale)
+
+| Caso | Materializar? | Motivo |
 |---|---|---|
-| `navegar dim=grupo` / `dim=classe` **sem filtro** | ✅ | poucas chaves, alto reuso, D1 caro, invalidação trivial |
-| `navegar` com filtro (`dim=pdm classe=*LIMPEZA*`) | ❌ | combinação ~infinita de chaves; segue no D1 |
-| `buscar_catalogo` | ❌ | linguagem natural, cauda longa → hit rate baixo; gargalo é Cohere, não D1 |
-| `grep_catalogo` / `codigo_catalogo` | ❌ | já sub-500 ms no D1 |
+| `navegar dim=grupo`/`dim=classe`, escopo `active` e `all` | ✅ Fase A | poucas linhas, muito lido, agregação cara |
+| `navegar` com filtro (`dim=pdm classe=*LIMPEZA*`) | ❌ | combinação ~infinita; segue agregação ao vivo |
+| `buscar_catalogo` | ❌ | NL, cauda longa; gargalo é o reranker externo |
+| `grep`/`codigo` | ❌ | já sub-500 ms |
 
-## 7. Proposta de promoção (quando houver GO)
+---
 
-1. **Namespace KV de produção** `CATALOGO_FACETAS` no `catmat-catser-api`.
-2. **Write-through no ETL:** ao fim de um `apply` bem-sucedido (já rastreado por
-   `catalogo_etl_state`), gravar `facetas:grupo:all` e `facetas:classe:all` no
-   KV. Um passo a mais no `catalogo-etl.yml`, no mesmo ciclo que muda os dados.
-3. **Leitura com fallback:** `navegar_catalogo` quando `dim` sem filtro tenta o
-   KV; **miss → cai no D1** e (opcional) popula o KV. Nunca serve dado errado:
-   na dúvida, o D1 é a verdade.
-4. **TTL 40 dias** como rede de segurança (o ETL reescreve todo mês).
-5. Cache-busting no deploy do ETL: a chave carrega o `etl_run_id` do ciclo, para
-   auditoria de qual carga gerou a faceta.
+## 5. Testes exigidos antes de qualquer promoção (da review)
 
-## 8. Riscos e custos
+- **Paridade exata** faceta materializada × `consultarFacetas`, com dataset de
+  ativos **e** inativos, por escopo.
+- Fase B: KV malformado / antigo / escopo errado / miss / exceção → todos caem
+  no D1.
+- **Falha do ETL após a mutação do D1**: garantir que o KV não é publicado e que
+  a tabela materializada só "vale" após o gate.
+- Benchmark **cold vs warm separados**, 30+ amostras, p50/p95, múltiplas regiões
+  — e comparando conteúdo, não só latência.
 
-| Item | Avaliação |
-|---|---|
-| Consistência eventual do KV (~60 s) | irrelevante: muda 1×/mês |
-| Staleness | limitada ao ciclo do ETL; fallback D1 cobre miss |
-| Custo KV | irrisório (2 chaves, ~25 KB, leituras baratas) |
-| Complexidade | +1 passo no ETL, +1 branch no `navegar` (com fallback) — pequeno |
-| Superfície de cliente | nenhuma mudança de contrato; só latência menor |
+---
 
-## 9. Teardown do protótipo (após a análise)
+## 6. Riscos e custos
 
-```bash
-npx wrangler delete --name catalogo-kv-proto
-npx wrangler kv namespace delete --namespace-id acfa454eefd94ccf96c90832c4f68f07
-```
+| Item | Fase A (tabela D1) | Fase B (KV) |
+|---|---|---|
+| Consistência | forte (atômica com a carga) | eventual (~60 s), mitigada por chave-por-run + fallback |
+| Staleness | nenhuma | limitada ao intervalo de propagação; documentada |
+| Complexidade | +1 tabela, +1 passo no ETL | +namespace, +publicação pós-gate, +validação/fallback |
+| Custo | ~zero | irrisório |
+| Contrato de cliente | inalterado | inalterado |
+
+---
+
+## 7. Recomendação
+
+**GO para aprofundar, NÃO GO para produção com KV agora** (alinhado à review).
+Ordem: **Fase A** (tabela materializada — resolve o custo com consistência
+forte) → medir → só então avaliar a **Fase B** (KV) se a latência ainda pedir.
+
+---
+
+## 8. Estado do protótipo
+
+`experiments/catalogo-kv-proto` foi **retirado do ar** em 17/07 (worker deletado
++ KV de teste deletado) — ele existia só para medir a latência da agregação e
+cumpriu o papel. O código fica no PR como registro histórico, com estas
+ressalvas de método (§1). Não deve ser re-publicado sem auth (achado #4).
 
 ## Resumo de uma linha
 
-As facetas de topo custam 1,6–1,9 s no D1 e 1 ms no KV; como mudam só no ETL
-mensal, o write-through pelo ETL é um ganho grande, barato e de invalidação
-trivial — vale promover, restrito às facetas sem filtro.
+As facetas de topo custam 1,6–1,9 s no D1 e valem pré-computar — mas por uma
+**tabela materializada atômica no D1** (consistência forte, baixa complexidade)
+primeiro, deixando o KV como 2ª camada opcional com chave-por-run, publicação
+pós-gate, validação e fallback — sem prometer zero staleness.
