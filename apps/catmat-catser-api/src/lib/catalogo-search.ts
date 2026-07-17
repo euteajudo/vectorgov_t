@@ -51,6 +51,7 @@ interface CatalogoRow {
   grupo: string | null;
   classe: string | null;
   pdm: string | null;
+  ncm: string | null;
   ativo: number;
   rank?: number;
 }
@@ -117,6 +118,7 @@ async function execFts(
       c.grupo AS grupo,
       c.classe AS classe,
       c.pdm AS pdm,
+      c.ncm AS ncm,
       c.ativo AS ativo,
       bm25(${tabela}) AS rank
     FROM ${tabela} f
@@ -257,19 +259,27 @@ export function montarDocRerank(d: {
 export function parseCohereResults(
   payload: unknown,
   totalDocs: number,
-): Array<{ index: number; score: number }> {
+): Array<{ index: number; score: number }> | null {
   const results = (payload as { results?: unknown } | null)?.results;
-  if (!Array.isArray(results)) return [];
+  if (!Array.isArray(results)) return null;
+  const vistos = new Set<number>();
   const out: Array<{ index: number; score: number }> = [];
   for (const r of results) {
     const entry = r as { index?: unknown; relevance_score?: unknown };
     const idx = entry?.index;
     const score = entry?.relevance_score;
-    if (typeof idx !== "number" || !Number.isInteger(idx)) continue;
-    if (idx < 0 || idx >= totalDocs) continue;
-    if (typeof score !== "number" || !Number.isFinite(score)) continue;
+    if (typeof idx !== "number" || !Number.isInteger(idx)) return null;
+    if (idx < 0 || idx >= totalDocs) return null;
+    if (typeof score !== "number" || !Number.isFinite(score)) return null;
+    if (vistos.has(idx)) return null;
+    vistos.add(idx);
     out.push({ index: idx, score });
   }
+  // Cobertura TOTAL obrigatória: resposta parcial derrubaria em silêncio os
+  // candidatos sem score (viram undefined e somem no threshold). É mais
+  // honesto degradar para RRF com o pool inteiro do que responder com um
+  // subconjunto escolhido por acidente do parse.
+  if (out.length !== totalDocs) return null;
   return out;
 }
 
@@ -305,7 +315,7 @@ async function rerankCohere(
     if (!res.ok) return null;
     const payload: unknown = await res.json();
     const parsed = parseCohereResults(payload, candidatos.length);
-    if (parsed.length === 0) return null;
+    if (parsed === null) return null;
     const out = new Map<string, number>();
     for (const { index, score } of parsed) {
       out.set(candidatos[index]!.id, score);
@@ -323,6 +333,8 @@ function itemFromRow(r: CatalogoRow): ItemCatalogo {
     descricao: r.descricao,
     grupo: r.grupo,
     classe: r.classe,
+    pdm: r.pdm || null,
+    ncm: r.ncm || null,
     ativo: r.ativo !== 0,
   };
 }
@@ -334,6 +346,8 @@ function itemFromMeta(meta: Record<string, unknown>): ItemCatalogo {
     descricao: (meta.descricao as string) ?? "",
     grupo: (meta.grupo as string) || null,
     classe: (meta.classe as string) || null,
+    pdm: (meta.pdm as string) || null,
+    ncm: (meta.ncm as string) || null,
     // Vector antigo pode não carregar `ativo` no metadata — assume ativo.
     ativo: !(meta.ativo === 0 || meta.ativo === false),
   };

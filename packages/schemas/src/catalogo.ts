@@ -27,6 +27,10 @@ export const ItemCatalogoSchema = z.object({
   descricao: z.string().min(1),
   grupo: z.string().nullable().default(null),
   classe: z.string().nullable().default(null),
+  /** Nome do PDM (padrão descritivo) — o nome canônico curto do produto. */
+  pdm: z.string().nullable().optional(),
+  /** Código NCM quando informado na fonte (~13% dos materiais). */
+  ncm: z.string().nullable().optional(),
   /**
    * @deprecated O catálogo-fonte não traz unidade de medida por item — o campo
    * era sempre `null` hardcoded. O worker do catálogo não o envia mais; fica

@@ -15,6 +15,7 @@ const LINHA = {
   grupo: "MATERIAL HOSPITALAR",
   classe: "VESTUARIO HOSPITALAR",
   pdm: "LUVA PROCEDIMENTO",
+  ncm: "40151200",
   ativo: 1,
   rank: -1.2,
 };
@@ -67,6 +68,9 @@ describe("queryFtsCatalogo via grepCatalogo (AND-first + fallback OR)", () => {
     const env = createTestEnv({ DB: db });
     const r = await grepCatalogo(env, { padrao: "luva procedimento", max: 20 });
     expect(r.total).toBe(1);
+    // pdm/ncm chegam ao payload (P2 do review: eram descartados no construtor).
+    expect(r.itens[0]!.pdm).toBe("LUVA PROCEDIMENTO");
+    expect(r.itens[0]!.ncm).toBe("40151200");
     expect(chamadas).toHaveLength(1);
     expect(chamadas[0]).toBe('"luva" "procedimento"');
   });

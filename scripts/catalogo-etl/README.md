@@ -57,12 +57,22 @@ Gera `out/catser-d1.sql` e `out/itens-servico.ndjson`.
 ### 2. D1 — aplicar migrations + importar
 ```
 wrangler d1 migrations apply catmat-catser-db --remote   # inclui a 0007 (ncm/atualizado_em + FTS com pdm)
+wrangler d1 execute catmat-catser-db --remote --file scripts/catalogo-etl/sql/reset-pre-carga.sql
 wrangler d1 execute catmat-catser-db --remote --file ./out/catalogo-d1.sql
 wrangler d1 execute catmat-catser-db --remote --file ./out/catser-d1.sql
+wrangler d1 execute catmat-catser-db --remote --file scripts/catalogo-etl/sql/rebuild-pos-carga.sql
 ```
-Os dois arquivos terminam com `DELETE FROM catalogo_fts` + repopulação a partir
-de `catalogo_itens`, então a ordem entre eles não importa — o último deixa a
-FTS consistente com a tabela inteira (e sem duplicar com os triggers da 0007).
+Os SQLs gerados carregam SÓ `catalogo_itens` (a ordem entre catmat/catser não
+importa). O `reset-pre-carga.sql` derruba os triggers antes da limpeza — com
+eles ativos, cada DELETE em `catalogo_itens` dispara um SCAN completo da FTS
+(coluna `catalogo_id` é UNINDEXED) e a limpeza de ~346k itens vira O(n²),
+estourando o limite de 30s por query do D1. O `rebuild-pos-carga.sql`
+reconstrói FTS + trigram uma única vez (em fatias por `codigo % 4`) e recria
+os triggers. Validar ao final:
+```
+wrangler d1 execute catmat-catser-db --remote --command "SELECT (SELECT COUNT(*) FROM catalogo_itens) AS itens, (SELECT COUNT(*) FROM catalogo_fts) AS fts, (SELECT COUNT(*) FROM catalogo_trgm) AS trgm;"
+```
+As três contagens devem coincidir.
 
 ### 3. Vectorize — criar índice + metadata index
 ```
@@ -87,7 +97,11 @@ type out\itens-servico.ndjson >> out\itens.ndjson      # Windows cmd
 ```
 CF_ACCOUNT_ID=a89dbdb0224cd8d2292cda8a038bc297 CF_API_TOKEN=*** OUT_DIR=./out npm run embed
 ```
-Resumível (continua de onde parou). Gera `out/vectors.ndjson`.
+Resumível e à prova de crash (o último arquivo-lote é revalidado linha a
+linha na retomada). Gera `out/vectors-000.ndjson`, `vectors-001.ndjson`, ...
+com até 40k vetores cada — o `wrangler vectorize upsert` trava com arquivos
+na casa de ~100k vetores, e lotes menores permitem retomar a carga do
+arquivo que falhou em vez de recomeçar.
 
 **Custo estimado da carga completa (~346k itens)**: `texto_embed` médio de
 235 chars → ~23–27M tokens de entrada. Na tarifa vigente do `@cf/baai/bge-m3`
@@ -95,10 +109,21 @@ Resumível (continua de onde parou). Gera `out/vectors.ndjson`.
 de 100 textos. Conferir a página de pricing do Workers AI antes de rodar — e o
 free tier diário não cobre a carga inteira num dia.
 
-### 5. Vectorize — bulk insert
+### 5. Vectorize — bulk upsert (um por arquivo-lote)
 ```
-wrangler vectorize insert catmat-catser --file ./out/vectors.ndjson
+for f in ./out/vectors-*.ndjson; do
+  wrangler vectorize upsert catmat-catser --file "$f"
+done
 ```
+Usar `upsert`, nunca `insert`: o insert preserva vetores de IDs já existentes
+— numa recarga, embeddings e metadata novos (pdm/ativo/ncm) seriam
+silenciosamente ignorados. Validar a carga ao final:
+```
+wrangler vectorize info catmat-catser
+```
+O `vectorCount` deve convergir para o total embedado (a contagem do Vectorize
+atualiza com atraso de alguns minutos — repetir o `info` até estabilizar; se
+estacionar abaixo do total, reexecutar o upsert do(s) arquivo(s) que falharam).
 
 ## Amostra vs full
 Para validar rápido / conter custo, dá para embeddar só um recorte
@@ -107,7 +132,8 @@ para ele). O D1 pode receber a carga completa (barato) independentemente.
 
 ## Recarga
 Os SQLs gerados só fazem INSERT — recarregar sobre um banco já populado viola
-a PK. Para recarga completa, limpar antes:
-```
-wrangler d1 execute catmat-catser-db --remote --command "DELETE FROM catalogo_itens; DELETE FROM catalogo_fts; DELETE FROM catalogo_trgm;"
-```
+a PK. Recarga completa é o MESMO fluxo da carga inicial (passo 2): reset →
+SQLs de dados → rebuild. Nunca limpar com um `DELETE FROM catalogo_itens`
+avulso com os triggers ativos — é o cenário O(n²) descrito no passo 2. No
+Vectorize, a recarga é o próprio `upsert` (passo 5): sobrescreve embeddings e
+metadata dos IDs existentes.

@@ -216,14 +216,10 @@ for await (let linha of rl) {
 }
 flushLote();
 
-// Repopulação da FTS: DELETE antes do INSERT..SELECT torna a carga correta
-// tanto no banco COM triggers (0007 — os INSERTs acima já espelharam na FTS e
-// seriam duplicados) quanto no banco sem.
-sql.write("DELETE FROM catalogo_fts;\n");
-sql.write(
-  "INSERT INTO catalogo_fts (catalogo_id,codigo,tipo,grupo,classe,ncm,descricao,pdm) " +
-    "SELECT id,codigo,tipo,grupo,classe,ncm,descricao,pdm FROM catalogo_itens;\n",
-);
+// O SQL gerado carrega SÓ catalogo_itens. A FTS e a trigram são
+// reconstruídas UMA vez por sql/rebuild-pos-carga.sql (em fatias que cabem no
+// limite de 30s do D1) — repopular aqui, além de redundante, arriscava
+// estourar o limite com um INSERT..SELECT único de ~346k linhas na FTS5.
 ndjson.end();
 sql.end();
 

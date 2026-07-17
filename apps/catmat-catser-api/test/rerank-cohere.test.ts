@@ -95,8 +95,8 @@ describe("montarDocRerank", () => {
   });
 });
 
-describe("parseCohereResults", () => {
-  it("aceita entradas válidas e preserva index/score", () => {
+describe("parseCohereResults — cobertura total ou null", () => {
+  it("aceita resposta com cobertura completa e preserva index/score", () => {
     const out = parseCohereResults(
       { results: [{ index: 1, relevance_score: 0.8 }, { index: 0, relevance_score: 0.1 }] },
       2,
@@ -107,27 +107,54 @@ describe("parseCohereResults", () => {
     ]);
   });
 
-  it("ignora índices fora do range e scores não numéricos", () => {
-    const out = parseCohereResults(
-      {
-        results: [
-          { index: 5, relevance_score: 0.9 },
-          { index: -1, relevance_score: 0.9 },
-          { index: 0.5, relevance_score: 0.9 },
-          { index: 0, relevance_score: "alto" },
-          { index: 0, relevance_score: Number.NaN },
-          { index: 1, relevance_score: 0.7 },
-        ],
-      },
-      2,
-    );
-    expect(out).toEqual([{ index: 1, score: 0.7 }]);
+  it("cobertura PARCIAL vira null (senão candidatos sem score sumiriam em silêncio)", () => {
+    // 2 candidatos, 1 resultado: sem o guard, o item sem score viraria
+    // undefined e cairia no threshold — a busca devolveria 1 item em vez de
+    // degradar para RRF com os 2.
+    expect(
+      parseCohereResults({ results: [{ index: 0, relevance_score: 0.9 }] }, 2),
+    ).toBeNull();
   });
 
-  it("payload sem results (ou não-objeto) vira lista vazia", () => {
-    expect(parseCohereResults(null, 2)).toEqual([]);
-    expect(parseCohereResults({}, 2)).toEqual([]);
-    expect(parseCohereResults({ results: "x" }, 2)).toEqual([]);
+  it("índice duplicado vira null", () => {
+    expect(
+      parseCohereResults(
+        {
+          results: [
+            { index: 0, relevance_score: 0.9 },
+            { index: 0, relevance_score: 0.8 },
+          ],
+        },
+        2,
+      ),
+    ).toBeNull();
+  });
+
+  it("qualquer entrada inválida (range, não-inteiro, score não numérico) vira null", () => {
+    expect(
+      parseCohereResults(
+        { results: [{ index: 5, relevance_score: 0.9 }, { index: 1, relevance_score: 0.7 }] },
+        2,
+      ),
+    ).toBeNull();
+    expect(
+      parseCohereResults(
+        { results: [{ index: 0.5, relevance_score: 0.9 }, { index: 1, relevance_score: 0.7 }] },
+        2,
+      ),
+    ).toBeNull();
+    expect(
+      parseCohereResults(
+        { results: [{ index: 0, relevance_score: "alto" }, { index: 1, relevance_score: 0.7 }] },
+        2,
+      ),
+    ).toBeNull();
+  });
+
+  it("payload sem results (ou não-objeto) vira null", () => {
+    expect(parseCohereResults(null, 2)).toBeNull();
+    expect(parseCohereResults({}, 2)).toBeNull();
+    expect(parseCohereResults({ results: "x" }, 2)).toBeNull();
   });
 });
 

@@ -139,13 +139,8 @@ do {
 } while (pagina <= totalPaginas);
 flushLote();
 
-// Mesma repopulação idempotente do parse-csv: quem rodar por último deixa a
-// FTS consistente com a tabela inteira (materiais + serviços).
-sql.write("DELETE FROM catalogo_fts;\n");
-sql.write(
-  "INSERT INTO catalogo_fts (catalogo_id,codigo,tipo,grupo,classe,ncm,descricao,pdm) " +
-    "SELECT id,codigo,tipo,grupo,classe,ncm,descricao,pdm FROM catalogo_itens;\n",
-);
+// SQL só de dados — a FTS e a trigram são reconstruídas de uma vez por
+// sql/rebuild-pos-carga.sql, depois que catmat E catser estiverem carregados.
 ndjson.end();
 sql.end();
 
