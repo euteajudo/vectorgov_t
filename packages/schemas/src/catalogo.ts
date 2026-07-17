@@ -27,14 +27,31 @@ export const ItemCatalogoSchema = z.object({
   descricao: z.string().min(1),
   grupo: z.string().nullable().default(null),
   classe: z.string().nullable().default(null),
-  unidade_medida: z.string().nullable().default(null),
+  /** Nome do PDM (padrão descritivo) — o nome canônico curto do produto. */
+  pdm: z.string().nullable().optional(),
+  /** Código NCM quando informado na fonte (~13% dos materiais). */
+  ncm: z.string().nullable().optional(),
+  /**
+   * @deprecated O catálogo-fonte não traz unidade de medida por item — o campo
+   * era sempre `null` hardcoded. O worker do catálogo não o envia mais; fica
+   * opcional (sem default) só para não quebrar consumidores antigos.
+   */
+  unidade_medida: z.string().nullable().optional(),
+  /** Situação real do item na fonte (coluna `ativo` do D1), não mais hardcoded. */
   ativo: z.boolean().default(true),
+  /**
+   * Relevância do item para a query (opcional, retrocompatível): score do
+   * rerank (0-1) quando houve rerank, ou score RRF no modo degradado.
+   */
+  score: z.number().optional(),
 });
 export type ItemCatalogo = z.infer<typeof ItemCatalogoSchema>;
 
-/** Resultado de uma busca no catálogo (semântica ou grep). */
+/** Resultado de uma busca no catálogo (híbrida ou lexical). */
 export const CatalogoBuscaResultadoSchema = z.object({
-  modo: z.enum(["semantico", "grep", "fuzzy"]),
+  // "semantico" permanece por retrocompat (consumidores antigos do mcp-server);
+  // o worker dedicado responde "hibrido" para o modo 3-way + rerank.
+  modo: z.enum(["semantico", "hibrido", "grep", "fuzzy"]),
   total: z.number().int().nonnegative(),
   itens: z.array(ItemCatalogoSchema),
 });
