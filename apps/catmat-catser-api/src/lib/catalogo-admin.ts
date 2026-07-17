@@ -353,16 +353,89 @@ const COLUNAS_DIM: Record<string, string> = {
   ncm: "ncm",
 };
 
+/**
+ * True se os filtros são SÓ o escopo (nenhum recorte de grupo/classe/pdm/desc/
+ * ncm/código/tipo) — condição para usar a tabela materializada. `ativo`
+ * mapeia o escopo: 1→"active", ausente→"all"; `ativo=0` (só inativos) não é
+ * escopo materializado.
+ */
+function escopoMaterializavel(f: FiltrosBrowse): "active" | "all" | null {
+  const semRecorte =
+    !f.grupo &&
+    !f.classe &&
+    !f.pdm &&
+    !f.desc &&
+    !f.ncm_prefix &&
+    !f.tipo &&
+    f.codigo_min === undefined &&
+    f.codigo_max === undefined;
+  if (!semRecorte) return null;
+  if (f.ativo === 1) return "active";
+  if (f.ativo === undefined) return "all";
+  return null; // ativo=0 → ao vivo
+}
+
+/**
+ * Fast-path: lê a faceta pré-computada de catalogo_facetas (Fase A). Retorna
+ * null em QUALQUER motivo de fallback — tabela inexistente (pré-migration),
+ * escopo/dim sem linhas — para o chamador cair no GROUP BY ao vivo. Nunca
+ * serve dado de escopo errado: a chave casa (dim, escopo) exatos.
+ */
+async function facetasMaterializadas(
+  env: Env,
+  dim: string,
+  escopo: "active" | "all",
+): Promise<{ facetas: Record<string, unknown>[]; distintos_total: number } | null> {
+  try {
+    const [{ results }, distintos] = await Promise.all([
+      env.DB.prepare(
+        `SELECT valor, n FROM catalogo_facetas
+         WHERE dim = ? AND escopo = ?
+         ORDER BY n DESC, valor ASC LIMIT ${FACETAS_TOP}`,
+      )
+        .bind(dim, escopo)
+        .all<Record<string, unknown>>(),
+      env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM catalogo_facetas WHERE dim = ? AND escopo = ?`,
+      )
+        .bind(dim, escopo)
+        .first<{ n: number }>(),
+    ]);
+    const total = distintos?.n ?? 0;
+    if (total === 0) return null; // vazia → fallback ao vivo
+    return { facetas: results ?? [], distintos_total: total };
+  } catch {
+    return null; // tabela ausente (pré-migration) → fallback
+  }
+}
+
 /** Facetas (valores distintos + contagens) — compartilhada admin/pública. */
 export async function consultarFacetas(
   env: Env,
   opts: { dim: string; filtros: FiltrosBrowse },
 ): Promise<
-  | { ok: true; dim: string; facetas: Record<string, unknown>[]; distintos_total: number }
+  | {
+      ok: true;
+      dim: string;
+      facetas: Record<string, unknown>[];
+      distintos_total: number;
+      fonte: "materializada" | "ao_vivo";
+    }
   | { ok: false; erro: string }
 > {
   const coluna = COLUNAS_DIM[opts.dim];
   if (!coluna) return { ok: false, erro: "dim deve ser grupo|classe|pdm|ncm" };
+
+  // Fast-path: facetas de topo sem recorte usam a tabela materializada
+  // (Fase A). Fallback silencioso ao GROUP BY ao vivo em qualquer miss.
+  const escopo = escopoMaterializavel(opts.filtros);
+  if (escopo) {
+    const mat = await facetasMaterializadas(env, opts.dim, escopo);
+    if (mat) {
+      return { ok: true, dim: opts.dim, ...mat, fonte: "materializada" };
+    }
+  }
+
   const { where, binds } = montarWhere(opts.filtros);
   const [{ results: facetas }, distintos] = await Promise.all([
     env.DB.prepare(
@@ -383,6 +456,7 @@ export async function consultarFacetas(
     dim: opts.dim,
     facetas: facetas ?? [],
     distintos_total: distintos?.n ?? 0,
+    fonte: "ao_vivo",
   };
 }
 

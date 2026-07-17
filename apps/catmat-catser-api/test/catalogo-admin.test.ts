@@ -284,3 +284,65 @@ describe("lanes (via executor com trace)", () => {
     expect(body.trace.lanes.semantica.status).toBe("ok");
   });
 });
+
+describe("facetas materializadas — fast-path vs fallback (Fase A)", () => {
+  const MAT = [
+    { valor: "DETERGENTE", n: 102 },
+    { valor: "AROMATIZANTE", n: 37 },
+  ];
+  const AOVIVO = [{ valor: "AO_VIVO_GROUP_BY", n: 5 }];
+
+  // Fake que distingue leitura da tabela materializada vs GROUP BY ao vivo.
+  function envFacetas(opts: { materializada: boolean }) {
+    const regras: RegraD1[] = [
+      {
+        match: "FROM catalogo_facetas",
+        resolver: (sql) =>
+          opts.materializada
+            ? sql.includes("COUNT(*)")
+              ? [{ n: MAT.length }]
+              : MAT
+            : [], // tabela vazia → dispara fallback
+      },
+      {
+        match: "GROUP BY",
+        resolver: (sql) => (sql.includes("COUNT(DISTINCT") ? [{ n: 1 }] : AOVIVO),
+      },
+    ];
+    return envAdmin(regras);
+  }
+
+  it("dim sem filtro (escopo all) lê a tabela materializada", async () => {
+    const res = await adminRouter(req("facetas?dim=grupo", { key: KEY }), envFacetas({ materializada: true }));
+    const b = (await res.json()) as { facetas: Array<{ valor: string }>; fonte: string; distintos_total: number };
+    expect(b.fonte).toBe("materializada");
+    expect(b.facetas.map((f) => f.valor)).toContain("DETERGENTE");
+    expect(b.distintos_total).toBe(2);
+  });
+
+  it("dim sem filtro (ativo=1 → escopo active) também usa a materializada", async () => {
+    const res = await adminRouter(req("facetas?dim=classe&ativo=1", { key: KEY }), envFacetas({ materializada: true }));
+    const b = (await res.json()) as { fonte: string };
+    expect(b.fonte).toBe("materializada");
+  });
+
+  it("COM filtro (classe=*X*) NUNCA usa a materializada — vai ao vivo", async () => {
+    const res = await adminRouter(req("facetas?dim=pdm&classe=*LIMPEZA*", { key: KEY }), envFacetas({ materializada: true }));
+    const b = (await res.json()) as { facetas: Array<{ valor: string }>; fonte: string };
+    expect(b.fonte).toBe("ao_vivo");
+    expect(b.facetas.map((f) => f.valor)).toContain("AO_VIVO_GROUP_BY");
+  });
+
+  it("ativo=0 (só inativos) não é escopo materializado → ao vivo", async () => {
+    const res = await adminRouter(req("facetas?dim=grupo&ativo=0", { key: KEY }), envFacetas({ materializada: true }));
+    const b = (await res.json()) as { fonte: string };
+    expect(b.fonte).toBe("ao_vivo");
+  });
+
+  it("tabela vazia (miss) → fallback silencioso ao vivo", async () => {
+    const res = await adminRouter(req("facetas?dim=grupo", { key: KEY }), envFacetas({ materializada: false }));
+    const b = (await res.json()) as { facetas: Array<{ valor: string }>; fonte: string };
+    expect(b.fonte).toBe("ao_vivo");
+    expect(b.facetas.map((f) => f.valor)).toContain("AO_VIVO_GROUP_BY");
+  });
+});

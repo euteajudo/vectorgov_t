@@ -226,7 +226,35 @@ export function gerarDeltaSql(plano) {
       "END;",
   );
 
+  // Rematerializa as facetas de topo na MESMA transação do delta (Fase A) —
+  // itens e facetas mudam juntos, consistência forte. sqlMaterializarFacetas()
+  // é a mesma agregação do fast-path de leitura (paridade por construção).
+  linhas.push(sqlMaterializarFacetas());
+
   return linhas.join("\n") + "\n";
+}
+
+/**
+ * SQL que rebuilda catalogo_facetas a partir de catalogo_itens (Fase A).
+ * Fonte única, reusada pelo delta e testável isoladamente. DELETE + reINSERT
+ * dos 4 dims × 2 escopos; a leitura ordena/corta (aqui vai tudo).
+ */
+export function sqlMaterializarFacetas() {
+  const dims = ["grupo", "classe", "pdm", "ncm"];
+  const linhas = ["DELETE FROM catalogo_facetas;"];
+  for (const d of dims) {
+    linhas.push(
+      `INSERT INTO catalogo_facetas (dim, escopo, valor, n) ` +
+        `SELECT '${d}', 'active', ${d}, COUNT(*) FROM catalogo_itens ` +
+        `WHERE ativo = 1 AND ${d} IS NOT NULL GROUP BY ${d};`,
+    );
+    linhas.push(
+      `INSERT INTO catalogo_facetas (dim, escopo, valor, n) ` +
+        `SELECT '${d}', 'all', ${d}, COUNT(*) FROM catalogo_itens ` +
+        `WHERE ${d} IS NOT NULL GROUP BY ${d};`,
+    );
+  }
+  return linhas.join("\n");
 }
 
 // Reconfere cada exclusão planejada na API oficial. Item que "sumiu" da fonte

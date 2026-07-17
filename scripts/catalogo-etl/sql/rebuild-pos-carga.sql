@@ -177,3 +177,24 @@ CREATE TRIGGER catalogo_itens_au AFTER UPDATE ON catalogo_itens BEGIN
   INSERT INTO catalogo_trgm (catalogo_id, codigo, tipo, descricao)
     VALUES (new.id, new.codigo, new.tipo, new.descricao);
 END;
+
+-- ── Facetas de topo materializadas (Fase A do design KV) ──
+-- Recomputa catalogo_facetas após a carga full. Mesma agregação do fast-path
+-- de leitura (paridade por construção). Exige a tabela da migration 0009.
+DELETE FROM catalogo_facetas;
+INSERT INTO catalogo_facetas (dim, escopo, valor, n)
+  SELECT 'grupo', 'active', grupo, COUNT(*) FROM catalogo_itens WHERE ativo = 1 AND grupo IS NOT NULL GROUP BY grupo;
+INSERT INTO catalogo_facetas (dim, escopo, valor, n)
+  SELECT 'grupo', 'all', grupo, COUNT(*) FROM catalogo_itens WHERE grupo IS NOT NULL GROUP BY grupo;
+INSERT INTO catalogo_facetas (dim, escopo, valor, n)
+  SELECT 'classe', 'active', classe, COUNT(*) FROM catalogo_itens WHERE ativo = 1 AND classe IS NOT NULL GROUP BY classe;
+INSERT INTO catalogo_facetas (dim, escopo, valor, n)
+  SELECT 'classe', 'all', classe, COUNT(*) FROM catalogo_itens WHERE classe IS NOT NULL GROUP BY classe;
+INSERT INTO catalogo_facetas (dim, escopo, valor, n)
+  SELECT 'pdm', 'active', pdm, COUNT(*) FROM catalogo_itens WHERE ativo = 1 AND pdm IS NOT NULL GROUP BY pdm;
+INSERT INTO catalogo_facetas (dim, escopo, valor, n)
+  SELECT 'pdm', 'all', pdm, COUNT(*) FROM catalogo_itens WHERE pdm IS NOT NULL GROUP BY pdm;
+INSERT INTO catalogo_facetas (dim, escopo, valor, n)
+  SELECT 'ncm', 'active', ncm, COUNT(*) FROM catalogo_itens WHERE ativo = 1 AND ncm IS NOT NULL GROUP BY ncm;
+INSERT INTO catalogo_facetas (dim, escopo, valor, n)
+  SELECT 'ncm', 'all', ncm, COUNT(*) FROM catalogo_itens WHERE ncm IS NOT NULL GROUP BY ncm;

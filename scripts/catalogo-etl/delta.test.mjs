@@ -5,6 +5,7 @@ import {
   planejarDelta,
   avaliarGates,
   gerarDeltaSql,
+  sqlMaterializarFacetas,
   estimarCustoEmbed,
   confirmarExclusoes,
   lerLinhasD1,
@@ -208,4 +209,29 @@ test("lerLinhasD1: formato do wrangler --json e success=false", () => {
     () => lerLinhasD1(JSON.stringify([{ results: [], success: false }])),
     /success=false/,
   );
+});
+
+test("sqlMaterializarFacetas: DELETE + 4 dims x 2 escopos, mesma agregacao do fast-path", () => {
+  const sql = sqlMaterializarFacetas();
+  assert.match(sql, /DELETE FROM catalogo_facetas;/);
+  for (const dim of ["grupo", "classe", "pdm", "ncm"]) {
+    // escopo active usa ativo=1; escopo all sem filtro de ativo
+    assert.ok(sql.includes(`SELECT '${dim}', 'active', ${dim}, COUNT(*) FROM catalogo_itens WHERE ativo = 1 AND ${dim} IS NOT NULL GROUP BY ${dim};`), `active ${dim}`);
+    assert.ok(sql.includes(`SELECT '${dim}', 'all', ${dim}, COUNT(*) FROM catalogo_itens WHERE ${dim} IS NOT NULL GROUP BY ${dim};`), `all ${dim}`);
+  }
+  // 8 INSERTs no total
+  assert.equal((sql.match(/INSERT INTO catalogo_facetas/g) || []).length, 8);
+});
+
+test("gerarDeltaSql inclui a rematerializacao das facetas na mesma transacao", () => {
+  const plano = {
+    novos: [item(5)],
+    alteradosVetor: [],
+    alteradosData: [],
+    excluidos: [],
+    totalD1: 1,
+  };
+  const sql = gerarDeltaSql(plano);
+  assert.match(sql, /DELETE FROM catalogo_facetas;/);
+  assert.match(sql, /INSERT INTO catalogo_facetas/);
 });
