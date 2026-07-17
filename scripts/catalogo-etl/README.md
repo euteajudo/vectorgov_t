@@ -14,8 +14,19 @@ então é um ETL em lote, não um pipeline ao vivo como o das leis.
 
 | Fonte | Script | Volume validado |
 |---|---|---|
-| CATMAT — CSV oficial do dadosabertos (UTF-8 com BOM, `;`) | `parse-csv.mjs` | 343.352 materiais, `codigoItem` único |
+| CATMAT — API pública `dadosabertos.compras.gov.br` (`/modulo-material/4_consultarItemMaterial`) | `fetch-catmat.mjs` | 343.510 materiais (248.017 ativos + 95.493 inativos), ~688 páginas de 500 |
+| CATMAT — CSV oficial do dadosabertos (UTF-8 com BOM, `;`) — alternativa manual | `parse-csv.mjs` | 343.352 materiais, `codigoItem` único |
 | CATSER — API pública `dadosabertos.compras.gov.br` (`/modulo-servico/6_consultarItemServico`) | `fetch-catser.mjs` | 2.868 serviços únicos (2.797 ativos), 7 páginas de 500 |
+
+**Por que a API virou a fonte primária dos materiais (2026-07):** o CSV de
+~120MB não tem URL pública estável — as páginas gov.br/compras que o hospedam
+exigem login, o que inviabiliza a atualização agendada. A API devolve os
+MESMOS campos/valores do CSV (validado item a item, inclusive o formato de
+`dataHoraAtualizacao`) e ainda corrige um problema do caminho CSV: o CSV
+inclui itens inativos sem dizer (343.510 = 248.017 ativos + 95.493 inativos),
+e o `parse-csv.mjs` grava todos com `ativo=1`; o `fetch-catmat.mjs` grava o
+`statusItem` REAL. O `parse-csv.mjs` continua válido para carga manual a
+partir de um CSV local (mesmos arquivos de saída).
 
 O caminho XLSX antigo (`parse.mjs`) fica como legado: o XLSX do CATSER vinha
 com mojibake (`¿` no lugar de ÇÕ/ÇÃ) e o do CATMAT sem NCM/status/data. A API
@@ -41,12 +52,19 @@ com PDM contendo "NOTEBOOK" que afundavam sob acessórios).
 cd scripts/catalogo-etl && npm install
 ```
 
-### 1a. Parse CATMAT (offline, gratuito) — CSV → SQL + NDJSON
+### 1a. Fetch CATMAT (online, gratuito, sem auth) — API → SQL + NDJSON
+```
+node --max-old-space-size=4096 fetch-catmat.mjs --out ./out
+```
+Gera `out/catalogo-d1.sql` e `out/itens.ndjson` (ordenados por código —
+saída determinística). Para smoke test: `--max-paginas 3`.
+
+Alternativa manual a partir do CSV local (mesmas saídas, mas `ativo=1` fixo —
+ver "Fontes" acima):
 ```
 node parse-csv.mjs --input D:/dados/catmat.csv --out ./out
 ```
-Gera `out/catalogo-d1.sql` e `out/itens.ndjson`. Para validar rápido:
-`--sample 2000`. O CSV **não** entra no repositório.
+Para validar rápido: `--sample 2000`. O CSV **não** entra no repositório.
 
 ### 1b. Fetch CATSER (online, gratuito, sem auth) — API → SQL + NDJSON
 ```
@@ -179,3 +197,92 @@ SQLs de dados → rebuild. Nunca limpar com um `DELETE FROM catalogo_itens`
 avulso com os triggers ativos — é o cenário O(n²) descrito no passo 2. No
 Vectorize, a recarga é o próprio `upsert` (passo 5): sobrescreve embeddings e
 metadata dos IDs existentes.
+
+Para a atualização PERIÓDICA, a recarga completa é desperdício (re-embeda
+~346k itens ≈ US$ 0,35 + horas quando tipicamente poucos milhares mudaram) —
+usar o fluxo delta abaixo.
+
+## Atualização agendada (delta) — `.github/workflows/catalogo-etl.yml`
+
+Fluxo mensal automatizado (GitHub Actions, cron dia 5 06:20 UTC) que substitui
+a recarga manual por um diff campo a campo entre a fonte oficial e o D1:
+
+```
+fetch-catmat + fetch-catser (APIs, grátis)
+        │
+        ▼
+export do D1 (8 fatias por codigo % 8)      ← o D1 é a baseline; não há
+        │                                      estado paralelo para driftar
+        ▼
+delta.mjs — classifica cada item:
+  novo            → insert + embed
+  alterado_vetor  → mudou descricao/grupo/classe/pdm/ncm/ativo → upsert + re-embed
+  alterado_data   → só atualizado_em mudou → upsert sem embed
+  excluido        → delete no D1 + remoção do vetor
+        │
+        ├─ dry-run (DEFAULT): relatório do que SERIA aplicado e FIM
+        ▼
+embed SÓ do delta → apply atômico no D1 → gate de contagens →
+vectorize upsert → limpar-orfaos → gate vectorCount
+```
+
+**Por que GitHub Actions e não Cloudflare Workflows/Container:** o runbook é
+CLI-nativo (node + wrangler), o repo já tem o padrão de CI com os mesmos
+secrets (`deploy.yml`), cron/aprovação/logs/artifacts vêm de graça, e um lote
+mensal de minutos não justifica portar `d1 execute`/`vectorize upsert` para
+chamadas REST dentro de um Container. Se um dia o job estourar os limites do
+runner (6h/job), o desenho delta continua válido — só muda o executor.
+
+### Pré-condições (uma vez, manual)
+
+1. Migration 0007 aplicada + **carga inicial completa** feita pelo runbook
+   acima (passos 1–5b). O delta ATUALIZA um catálogo carregado; ele aborta
+   (gate `estado_invalido`) se o D1 estiver vazio/incompleto.
+2. Secrets no repo (Settings → Secrets and variables → Actions):
+   - `CATALOGO_CF_API_TOKEN` — token Cloudflare de escopo mínimo: **D1 Edit +
+     Vectorize Edit + Workers AI Read**. Não reusar o token de deploy.
+   - `CLOUDFLARE_ACCOUNT_ID` — já existe (deploy.yml).
+   - `ALERTA_WEBHOOK_URL` (opcional) — POST JSON em falha/apply.
+3. Variável `CATALOGO_ETL_MODE` **ausente ou `dry-run`** nos primeiros ciclos.
+   Flipar para `apply` SÓ depois de validar 1–2 relatórios de dry-run
+   (summary do run + artifact `catalogo-delta-N`).
+
+### Gates (o run ABORTA sem aplicar nada se qualquer um reprovar)
+
+| Gate | Default | Como aprovar acima do teto |
+|---|---|---|
+| Fonte insana (materiais < `CATMAT_MIN_ITENS`, serviços < `CATSER_MIN_ITENS`) | 300k / 2,5k | não se aprova — investigar a fonte |
+| D1 sem carga inicial (< `D1_MIN_ITENS`) | 250k | rodar o runbook manual |
+| Exclusões > `CATALOGO_MAX_EXCLUSOES` | 2.000 | dispatch manual com `override_teto_exclusoes` |
+| Itens p/ (re)embed > `CATALOGO_MAX_EMBED` | 60.000 (~US$ 0,06) | dispatch manual com `override_teto_embed` |
+| Exclusão fantasma (item "sumido" ainda responde na API) | sempre | não se aprova — re-rodar (fetch pegou o catálogo mudando) |
+| Pós-apply D1: `COUNT(itens) == COUNT(fts) == COUNT(trgm) == esperado` | sempre | reprova → alerta e NÃO segue ao Vectorize |
+| Pós-upsert: `vectorCount` converge ao total do D1 (poll 15 min) | sempre | reprova → alerta; re-executar upsert dos shards |
+
+O custo estimado do embed (tokens × tarifa do bge-m3) sai no relatório ANTES
+de qualquer passo pago; o cron **nunca** aplica acima do teto — override só
+existe no dispatch manual, que é a aprovação humana.
+
+### Semântica do PRIMEIRO apply (leia antes de flipar para apply)
+
+Como a fonte primária virou a API (com `statusItem` real) e a carga inicial
+via CSV gravou `ativo=1` para tudo, o primeiro delta vai propor a correção de
+status de **~95k materiais inativos** — acima do teto de embed, portanto
+exigirá `override_teto_embed` num dispatch manual (~US$ 0,10 de re-embed;
+`ativo` vive na metadata do vetor, e o upsert do Vectorize exige os values —
+por isso re-embeda). Ciclos seguintes voltam ao delta pequeno normal.
+
+### Recuperação
+
+- **Apply falhou no meio**: o `delta-d1.sql` roda num único `d1 execute
+  --file` (transação) e o workflow restaura os triggers defensivamente
+  (`sql/restaura-triggers.sql`). Re-rodar o workflow converge: o diff é
+  contra o estado REAL do D1, não contra um log de intenções.
+- **Gate de contagem reprovou**: re-rodar o workflow; persistindo, rodar
+  `sql/rebuild-pos-carga.sql` (reconstrói FTS/trgm do zero).
+- **vectorCount não convergiu**: D1 já está consistente; re-executar o upsert
+  dos shards (`wrangler vectorize upsert catmat-catser --file ...`) ou apenas
+  aguardar o próximo ciclo (upsert é idempotente).
+- **Delta local (debug)**: os mesmos comandos do workflow rodam na máquina —
+  exportar as 8 fatias com `wrangler d1 execute ... --json > out/d1-atual/slice-k.json`
+  e `npm run delta -- --fonte out/itens.ndjson --d1 out/d1-atual --out out/delta`.

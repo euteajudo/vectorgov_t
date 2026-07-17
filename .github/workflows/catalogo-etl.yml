@@ -1,0 +1,259 @@
+name: Catálogo CATMAT/CATSER — atualização agendada
+
+# Atualização DELTA-AWARE do catálogo (D1 + Vectorize) a partir das APIs
+# oficiais do dadosabertos.compras.gov.br. Ver scripts/catalogo-etl/README.md
+# (§ "Atualização agendada") para o desenho completo, pré-condições e recuperação.
+#
+# Modos:
+#   dry-run (DEFAULT) — fetch + diff + relatório do que SERIA aplicado. Não
+#                       escreve nada no D1/Vectorize, não embeda nada.
+#   apply             — aplica o delta: embed só dos itens novos/alterados,
+#                       upsert atômico no D1, upsert no Vectorize, limpeza de
+#                       vetores órfãos, com gates de contagem em cada etapa.
+#
+# O agendamento mensal roda no modo da variável de repositório
+# CATALOGO_ETL_MODE (default dry-run — flipar para "apply" SÓ depois de
+# validar os primeiros relatórios). Overrides de teto exigem dispatch manual:
+# aprovação humana explícita, o cron nunca estoura teto sozinho.
+#
+# Secrets (Settings → Secrets and variables → Actions):
+#   CATALOGO_CF_API_TOKEN — token Cloudflare com D1 Edit + Vectorize Edit +
+#                           Workers AI Read (escopo mínimo; NÃO reusar o token
+#                           de deploy). O embed do delta consome Workers AI
+#                           (pago — estimativa no relatório antes de rodar).
+#   CLOUDFLARE_ACCOUNT_ID — já existe (deploy.yml).
+#   ALERTA_WEBHOOK_URL    — opcional; POST JSON em falha/apply (qualquer
+#                           receptor: worker, Hermes, etc).
+# Variables (opcionais):
+#   CATALOGO_ETL_MODE       — dry-run | apply (default dry-run)
+#   CATALOGO_MAX_EMBED      — teto de itens a (re)embedar por ciclo (default 60000)
+#   CATALOGO_MAX_EXCLUSOES  — teto de exclusões por ciclo (default 2000)
+
+on:
+  schedule:
+    # Dia 5 de cada mês, 06:20 UTC (03:20 BRT) — fora de janelas de publicação
+    # da fonte e de horário comercial.
+    - cron: "20 6 5 * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run reporta o delta; apply aplica"
+        type: choice
+        options: [dry-run, apply]
+        default: dry-run
+      override_teto_embed:
+        description: "Aprovar delta ACIMA do teto de embed (custo! ver relatório do dry-run)"
+        type: boolean
+        default: false
+      override_teto_exclusoes:
+        description: "Aprovar delta ACIMA do teto de exclusões"
+        type: boolean
+        default: false
+
+concurrency:
+  group: catalogo-etl
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  atualizar:
+    name: Delta CATMAT/CATSER (${{ github.event_name == 'workflow_dispatch' && inputs.mode || vars.CATALOGO_ETL_MODE || 'dry-run' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    defaults:
+      run:
+        working-directory: scripts/catalogo-etl
+    env:
+      MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || vars.CATALOGO_ETL_MODE || 'dry-run' }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CATALOGO_CF_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DELTA_MAX_EMBED: ${{ vars.CATALOGO_MAX_EMBED || '60000' }}
+      DELTA_MAX_EXCLUSOES: ${{ vars.CATALOGO_MAX_EXCLUSOES || '2000' }}
+      # Overrides SÓ via dispatch manual — cron nunca aprova teto sozinho.
+      DELTA_OVERRIDE_EMBED: ${{ github.event_name == 'workflow_dispatch' && inputs.override_teto_embed && 'true' || 'false' }}
+      DELTA_OVERRIDE_EXCLUSOES: ${{ github.event_name == 'workflow_dispatch' && inputs.override_teto_exclusoes && 'true' || 'false' }}
+      WRANGLER: npx --yes wrangler@4
+      D1_DB: catmat-catser-db
+      VECTORIZE_INDEX: catmat-catser
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Testes do planner
+        run: node --test delta.test.mjs
+
+      - name: Fetch CATMAT (API oficial, gratuito)
+        run: node --max-old-space-size=4096 fetch-catmat.mjs --out out
+
+      - name: Fetch CATSER (API oficial, gratuito)
+        run: node fetch-catser.mjs --out out
+
+      - name: Mescla materiais + serviços
+        run: cat out/itens-servico.ndjson >> out/itens.ndjson
+
+      - name: "Pré-condição: 0007 aplicada + carga inicial feita"
+        run: |
+          if ! $WRANGLER d1 execute "$D1_DB" --remote --json \
+              --command "SELECT ncm, atualizado_em FROM catalogo_itens LIMIT 1" > /dev/null; then
+            echo "::error::catmat-catser-db sem a migration 0007 (colunas ncm/atualizado_em) ou inacessível." \
+                 "O fluxo agendado pressupõe a carga inicial do runbook manual (README passo 2)." \
+                 "Aplique: wrangler d1 execute $D1_DB --remote --file infra/d1-migrations/0007_catalogo_v2.sql + carga completa."
+            exit 1
+          fi
+
+      - name: Exporta estado atual do D1 (8 fatias)
+        run: |
+          mkdir -p out/d1-atual
+          for k in 0 1 2 3 4 5 6 7; do
+            $WRANGLER d1 execute "$D1_DB" --remote --json --command \
+              "SELECT id,codigo,tipo,descricao,grupo,classe,pdm,ncm,ativo,atualizado_em FROM catalogo_itens WHERE codigo % 8 = $k" \
+              > "out/d1-atual/slice-$k.json"
+          done
+          wc -c out/d1-atual/*.json
+
+      - name: Planeja o delta (diff fonte × D1)
+        id: delta
+        run: |
+          set +e
+          node --max-old-space-size=4096 delta.mjs \
+            --fonte out/itens.ndjson --d1 out/d1-atual --out out/delta \
+            --confirmar-exclusoes
+          code=$?
+          set -e
+          if [ -f out/delta/relatorio.json ]; then
+            echo "tem_mudancas=$(jq -r '.tem_mudancas' out/delta/relatorio.json)" >> "$GITHUB_OUTPUT"
+            echo "embed_itens=$(jq -r '.embed.itens' out/delta/relatorio.json)" >> "$GITHUB_OUTPUT"
+            echo "excluidos=$(jq -r '.excluidos' out/delta/relatorio.json)" >> "$GITHUB_OUTPUT"
+            echo "itens_esperados=$(jq -r '.itens_esperados_apos_apply' out/delta/relatorio.json)" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$code" = "2" ]; then
+            echo "::error::Delta acima do teto (embed/exclusões). Aprovação humana: re-rodar via workflow_dispatch com o override correspondente. Detalhes no relatório (summary/artifact)."
+          elif [ "$code" = "3" ]; then
+            echo "::error::Fonte ou estado inválido (fonte encolheu, D1 sem carga inicial, ou exclusão fantasma por fetch instável). NADA foi aplicado. Detalhes no relatório."
+          fi
+          exit $code
+
+      - name: Publica relatório no summary
+        if: always()
+        run: |
+          if [ -f out/delta/relatorio.md ]; then
+            {
+              echo "**Modo:** \`$MODE\` | evento: \`${{ github.event_name }}\`"
+              echo ""
+              cat out/delta/relatorio.md
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Guarda artefatos do plano (auditoria)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalogo-delta-${{ github.run_number }}
+          path: |
+            scripts/catalogo-etl/out/delta/relatorio.json
+            scripts/catalogo-etl/out/delta/relatorio.md
+            scripts/catalogo-etl/out/delta/delta-d1.sql
+            scripts/catalogo-etl/out/delta/orfaos.json
+            scripts/catalogo-etl/out/ids-antes.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # ------------------------------------------------------------------
+      # Daqui para baixo: SÓ no modo apply, e só se houver mudanças.
+      # Ordem deliberada: embed (pago, sem efeito colateral) ANTES do D1 —
+      # se o embed falhar, nada foi tocado em produção.
+      # ------------------------------------------------------------------
+
+      - name: Embed do delta (GATED — consome Workers AI, custo no relatório)
+        if: env.MODE == 'apply' && steps.delta.outputs.tem_mudancas == 'true' && steps.delta.outputs.embed_itens != '0'
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_API_TOKEN: ${{ secrets.CATALOGO_CF_API_TOKEN }}
+          OUT_DIR: out/delta
+        run: node --max-old-space-size=4096 embed.mjs
+
+      - name: Aplica delta no D1 (upsert atômico)
+        if: env.MODE == 'apply' && steps.delta.outputs.tem_mudancas == 'true'
+        run: |
+          if ! $WRANGLER d1 execute "$D1_DB" --remote --file out/delta/delta-d1.sql; then
+            echo "::error::Apply do delta falhou — restaurando triggers (defensivo) e abortando. Re-rodar o workflow converge a partir do estado real."
+            $WRANGLER d1 execute "$D1_DB" --remote --file sql/restaura-triggers.sql || true
+            exit 1
+          fi
+
+      - name: "Gate D1: COUNT(itens) == COUNT(fts) == COUNT(trgm) == esperado"
+        if: env.MODE == 'apply' && steps.delta.outputs.tem_mudancas == 'true'
+        run: |
+          $WRANGLER d1 execute "$D1_DB" --remote --json --command \
+            "SELECT (SELECT COUNT(*) FROM catalogo_itens) AS itens, (SELECT COUNT(*) FROM catalogo_fts) AS fts, (SELECT COUNT(*) FROM catalogo_trgm) AS trgm" \
+            > out/contagens.json
+          node -e "
+            const r = JSON.parse(require('fs').readFileSync('out/contagens.json','utf8'))[0].results[0];
+            const esperado = ${{ steps.delta.outputs.itens_esperados }};
+            console.log('contagens:', JSON.stringify(r), '| esperado:', esperado);
+            if (r.itens !== r.fts || r.itens !== r.trgm || r.itens !== esperado) {
+              console.error('GATE REPROVADO: contagens divergem — NAO seguir para o Vectorize.');
+              console.error('Recuperacao: re-rodar o workflow (delta converge) ou rebuild-pos-carga.sql.');
+              process.exit(1);
+            }
+          "
+
+      - name: Upsert dos vetores no Vectorize (com retry por shard)
+        if: env.MODE == 'apply' && steps.delta.outputs.tem_mudancas == 'true' && steps.delta.outputs.embed_itens != '0'
+        run: |
+          shopt -s nullglob
+          for f in out/delta/vectors-*.ndjson; do
+            echo "upsert $f"
+            if ! $WRANGLER vectorize upsert "$VECTORIZE_INDEX" --file "$f"; then
+              echo "retry $f"
+              $WRANGLER vectorize upsert "$VECTORIZE_INDEX" --file "$f"
+            fi
+          done
+
+      - name: Remove vetores órfãos (itens excluídos)
+        if: env.MODE == 'apply' && steps.delta.outputs.tem_mudancas == 'true' && steps.delta.outputs.excluidos != '0'
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_API_TOKEN: ${{ secrets.CATALOGO_CF_API_TOKEN }}
+          OUT_DIR: out
+          VECTORIZE_INDEX: catmat-catser
+        run: node limpar-orfaos.mjs
+
+      - name: "Gate Vectorize: vectorCount converge para o total do D1"
+        if: env.MODE == 'apply' && steps.delta.outputs.tem_mudancas == 'true'
+        env:
+          ESPERADO: ${{ steps.delta.outputs.itens_esperados }}
+        run: |
+          # A mutação do Vectorize é assíncrona — poll até 15 min.
+          for i in $(seq 1 15); do
+            count=$(curl -sf "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/vectorize/v2/indexes/$VECTORIZE_INDEX/info" \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" | jq -r '.result.vectorCount')
+            echo "tentativa $i/15: vectorCount=$count esperado=$ESPERADO"
+            if [ "$count" = "$ESPERADO" ]; then
+              echo "OK: Vectorize convergiu."
+              exit 0
+            fi
+            sleep 60
+          done
+          echo "::error::vectorCount ($count) nao convergiu para $ESPERADO em 15 min." \
+               "D1 ja esta consistente; re-executar o upsert dos shards (artifact) ou aguardar e conferir 'wrangler vectorize info'."
+          exit 1
+
+      - name: Notifica (webhook opcional)
+        if: always() && (failure() || (env.MODE == 'apply' && steps.delta.outputs.tem_mudancas == 'true'))
+        env:
+          WEBHOOK: ${{ secrets.ALERTA_WEBHOOK_URL }}
+        run: |
+          [ -z "$WEBHOOK" ] && { echo "sem ALERTA_WEBHOOK_URL — só summary/e-mail do GitHub"; exit 0; }
+          status="${{ job.status }}"
+          rel="(sem relatório)"
+          [ -f out/delta/relatorio.json ] && rel=$(jq -c '{novos,alterados_vetor,alterados_data,excluidos,embed:.embed.itens,usd:.embed.usd_estimado}' out/delta/relatorio.json)
+          curl -sf -X POST "$WEBHOOK" -H "Content-Type: application/json" -d "$(jq -n \
+            --arg texto "[catalogo-etl] $status (modo $MODE) — $rel" \
+            --arg url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            '{origem:"catalogo-etl", status:$texto, run:$url}')" || echo "webhook falhou (não bloqueia)"
