@@ -107,6 +107,7 @@ async function execFts(
   matchExpr: string,
   tipo: TipoCatalogo | undefined,
   limit: number,
+  apenasAtivos = false,
 ): Promise<CatalogoRow[]> {
   const where: string[] = [`${tabela} MATCH ?`];
   const bind: unknown[] = [matchExpr];
@@ -114,6 +115,10 @@ async function execFts(
     where.push("c.tipo = ?");
     bind.push(tipo);
   }
+  // Filtro por situacao aplicado no JOIN (catalogo_itens = fonte de verdade
+  // do ativo; a FTS/trgm nao guardam ativo). Default false: as rotas admin
+  // e a interface veem tudo; as tools do MCP passam true (so vendaveis).
+  if (apenasAtivos) where.push("c.ativo = 1");
   const sql = `
     SELECT
       c.id AS catalogo_id,
@@ -148,14 +153,15 @@ async function queryFtsCatalogo(
   padrao: string,
   tipo: TipoCatalogo | undefined,
   limit: number,
+  apenasAtivos = false,
 ): Promise<FtsResultado> {
   let modoFts: FtsResultado["modoFts"] = "and";
   let expr = sanitizeFts5(padrao, "and");
-  let rows = await execFts(env, "catalogo_fts", expr, tipo, limit);
+  let rows = await execFts(env, "catalogo_fts", expr, tipo, limit, apenasAtivos);
   if (rows.length === 0) {
     modoFts = "or";
     expr = sanitizeFts5(expandirQuery(padrao), "or");
-    rows = await execFts(env, "catalogo_fts", expr, tipo, limit);
+    rows = await execFts(env, "catalogo_fts", expr, tipo, limit, apenasAtivos);
   }
   console.log(
     JSON.stringify({
@@ -180,6 +186,7 @@ async function queryTrgmCatalogo(
   padrao: string,
   tipo: TipoCatalogo | undefined,
   limit: number,
+  apenasAtivos = false,
 ): Promise<CatalogoRow[]> {
   const tokens = padrao
     .normalize("NFKC")
@@ -188,7 +195,7 @@ async function queryTrgmCatalogo(
     .filter((t) => t.length >= 3);
   if (tokens.length === 0) return [];
   const matchExpr = tokens.map((t) => `"${t}"`).join(" OR ");
-  return execFts(env, "catalogo_trgm", matchExpr, tipo, limit);
+  return execFts(env, "catalogo_trgm", matchExpr, tipo, limit, apenasAtivos);
 }
 
 async function queryVectorizeCatalogo(
@@ -394,7 +401,7 @@ async function medirLane<T>(
  */
 export async function buscarCatalogoHibrido(
   env: Env,
-  input: { descricao: string; tipo?: TipoCatalogo; top_k: number },
+  input: { descricao: string; tipo?: TipoCatalogo; top_k: number; apenasAtivos?: boolean },
   opts?: { trace?: boolean },
 ): Promise<CatalogoBuscaResultado & { trace?: TraceBusca }> {
   const comTrace = opts?.trace === true;
@@ -477,6 +484,10 @@ export async function buscarCatalogoHibrido(
       return { id, item: itemFromRow(row), pdm: row.pdm, rrf: rrf.get(id) ?? 0 };
     })
     .filter((x) => x.item.descricao.length > 0)
+    // Filtro de situacao com o ativo FRESCO do D1 (itemFromRow le a linha
+    // materializada, nao a metadata do vetor) — inativo nem entra no pool
+    // do rerank quando apenasAtivos.
+    .filter((x) => input.apenasAtivos !== true || x.item.ativo)
     .sort((a, b) => b.rrf - a.rrf)
     .slice(0, PER_RANKER_TOP_K);
 
@@ -620,9 +631,9 @@ export async function buscarCatalogoHibrido(
 /** Busca lexical (grep) — só D1 FTS5/BM25 (unicode61), AND-first com fallback OR. */
 export async function grepCatalogo(
   env: Env,
-  input: { padrao: string; tipo?: TipoCatalogo; max: number },
+  input: { padrao: string; tipo?: TipoCatalogo; max: number; apenasAtivos?: boolean },
 ): Promise<CatalogoBuscaResultado> {
-  const { rows } = await queryFtsCatalogo(env, input.padrao, input.tipo, input.max);
+  const { rows } = await queryFtsCatalogo(env, input.padrao, input.tipo, input.max, input.apenasAtivos === true);
   return { modo: "grep", total: rows.length, itens: rows.map(itemFromRow) };
 }
 
@@ -635,9 +646,10 @@ export async function grepCatalogo(
  */
 export async function grepCatalogoCascata(
   env: Env,
-  input: { padrao: string; tipo?: TipoCatalogo; max: number },
+  input: { padrao: string; tipo?: TipoCatalogo; max: number; apenasAtivos?: boolean },
 ): Promise<CatalogoBuscaResultado & { modo_busca: "exata" | "ampla" | "aproximada" }> {
-  const fts = await queryFtsCatalogo(env, input.padrao, input.tipo, input.max);
+  const aa = input.apenasAtivos === true;
+  const fts = await queryFtsCatalogo(env, input.padrao, input.tipo, input.max, aa);
   if (fts.rows.length > 0) {
     return {
       modo: "grep",
@@ -646,7 +658,7 @@ export async function grepCatalogoCascata(
       itens: fts.rows.map(itemFromRow),
     };
   }
-  const trgmRows = await queryTrgmCatalogo(env, input.padrao, input.tipo, input.max);
+  const trgmRows = await queryTrgmCatalogo(env, input.padrao, input.tipo, input.max, aa);
   return {
     modo: "grep",
     modo_busca: "aproximada",
@@ -658,9 +670,9 @@ export async function grepCatalogoCascata(
 /** Busca fuzzy (FTS5 trigram) — tolerante a digitação/substring, sem embedding. */
 export async function buscarCatalogoFuzzy(
   env: Env,
-  input: { padrao: string; tipo?: TipoCatalogo; max: number },
+  input: { padrao: string; tipo?: TipoCatalogo; max: number; apenasAtivos?: boolean },
 ): Promise<CatalogoBuscaResultado> {
-  const rows = await queryTrgmCatalogo(env, input.padrao, input.tipo, input.max);
+  const rows = await queryTrgmCatalogo(env, input.padrao, input.tipo, input.max, input.apenasAtivos === true);
   return { modo: "fuzzy", total: rows.length, itens: rows.map(itemFromRow) };
 }
 

@@ -57,14 +57,17 @@ async function buscar(request: Request, env: Env): Promise<Response> {
   const topK = Number.isFinite(topKRaw)
     ? Math.min(Math.max(topKRaw, 1), 50)
     : 10;
+  // ativo=1 filtra só vendáveis; ausente = tudo (a interface vectorgov.io e
+  // consumidores antigos seguem vendo tudo — quem quer só ativos passa ativo=1).
+  const apenasAtivos = url.searchParams.get("ativo") === "1";
 
   try {
     const resultado =
       modo === "fuzzy"
-        ? await buscarCatalogoFuzzy(env, { padrao: q, tipo, max: topK })
+        ? await buscarCatalogoFuzzy(env, { padrao: q, tipo, max: topK, apenasAtivos })
         : modo === "grep"
-          ? await grepCatalogo(env, { padrao: q, tipo, max: topK })
-          : await buscarCatalogoHibrido(env, { descricao: q, tipo, top_k: topK });
+          ? await grepCatalogo(env, { padrao: q, tipo, max: topK, apenasAtivos })
+          : await buscarCatalogoHibrido(env, { descricao: q, tipo, top_k: topK, apenasAtivos });
     return json(resultado);
   } catch (err) {
     const msg = err instanceof Error ? err.message : "erro na busca";
