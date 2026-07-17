@@ -202,6 +202,7 @@ async function queryVectorizeCatalogo(
   env: Env,
   vector: number[],
   tipo: TipoCatalogo | undefined,
+  topK: number = PER_RANKER_TOP_K,
 ): Promise<VectorHit[]> {
   if (!env.VECTORIZE_CATMAT) {
     throw new Error(
@@ -209,7 +210,7 @@ async function queryVectorizeCatalogo(
     );
   }
   const opts: VectorizeQueryOptions = {
-    topK: PER_RANKER_TOP_K,
+    topK,
     returnMetadata: "all",
   };
   if (tipo) opts.filter = { tipo } as VectorizeVectorMetadataFilter;
@@ -410,13 +411,21 @@ export async function buscarCatalogoHibrido(
   // fallback OR (AND-first fica na query original — precisão).
   const consultaExpandida = expandirQuery(input.descricao);
   const vector = await embedQuery(env, consultaExpandida);
+  const aa = input.apenasAtivos === true;
+  // Filtro de situação aplicado DENTRO de cada lane (achado P1 da review):
+  //  - FTS/trgm filtram no SQL (retornam 20 ativos);
+  //  - o índice semântico não filtra por situação (a metadata do vetor pode
+  //    estar defasada), então faz OVERFETCH e a confirmação no D1 (fresco)
+  //    peneira — assim um ativo na posição 21 não é perdido para inativos que
+  //    ocupariam a janela.
+  const vecTopK = aa ? PER_RANKER_TOP_K * 4 : PER_RANKER_TOP_K;
   const [vecR, ftsR, trgmR] = await Promise.all([
-    medirLane(() => queryVectorizeCatalogo(env, vector, input.tipo)),
+    medirLane(() => queryVectorizeCatalogo(env, vector, input.tipo, vecTopK)),
     medirLane(() =>
-      queryFtsCatalogo(env, input.descricao, input.tipo, PER_RANKER_TOP_K),
+      queryFtsCatalogo(env, input.descricao, input.tipo, PER_RANKER_TOP_K, aa),
     ),
     medirLane(() =>
-      queryTrgmCatalogo(env, input.descricao, input.tipo, PER_RANKER_TOP_K),
+      queryTrgmCatalogo(env, input.descricao, input.tipo, PER_RANKER_TOP_K, aa),
     ),
   ]);
   if (!comTrace) {

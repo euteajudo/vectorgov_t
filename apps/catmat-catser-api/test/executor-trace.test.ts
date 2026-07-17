@@ -114,3 +114,54 @@ describe("executor compartilhado — trace", () => {
     ).rejects.toThrow();
   });
 });
+
+describe("buscarCatalogoHibrido — filtro apenasAtivos (achado P1 da review)", () => {
+  it("aplica c.ativo=1 nas lanes FTS/trgm (cedo) e overfetch no vetor", async () => {
+    let sqlFts = "";
+    let topKVec: number | undefined;
+    const LIN = (c: number) => ({
+      catalogo_id: `cat-material-${c}`,
+      codigo: c, tipo: "material", descricao: `IT ${c}`,
+      grupo: "G", classe: "C", pdm: null, ncm: null, ativo: 1, rank: -1,
+    });
+    const env = createTestEnv({
+      AI: createFakeAi(),
+      VECTORIZE_CATMAT: createFakeVectorize({
+        matches: [{ id: "cat-material-1", score: 0.9, metadata: {} }],
+        onTopK: (k) => (topKVec = k),
+      }),
+      DB: createFakeD1({
+        regras: [
+          { match: "catalogo_fts", resolver: (sql) => { sqlFts = sql; return [LIN(1)]; } },
+          { match: "catalogo_trgm", rows: [] },
+          { match: "FROM catalogo_itens WHERE id IN", rows: [LIN(1)] },
+        ],
+      }),
+    });
+    await buscarCatalogoHibrido(env, { descricao: "parafuso", top_k: 5, apenasAtivos: true });
+    expect(sqlFts).toContain("c.ativo = 1"); // filtro entra na lane, nao depois
+    expect(topKVec).toBe(80); // overfetch 20*4 quando apenasAtivos
+  });
+
+  it("sem apenasAtivos NAO filtra e usa topK padrao no vetor", async () => {
+    let sqlFts = "";
+    let topKVec: number | undefined;
+    const LIN = {
+      catalogo_id: "cat-material-1", codigo: 1, tipo: "material",
+      descricao: "IT", grupo: "G", classe: "C", pdm: null, ncm: null, ativo: 1, rank: -1,
+    };
+    const env = createTestEnv({
+      AI: createFakeAi(),
+      VECTORIZE_CATMAT: createFakeVectorize({ matches: [], onTopK: (k) => (topKVec = k) }),
+      DB: createFakeD1({
+        regras: [
+          { match: "catalogo_fts", resolver: (sql) => { sqlFts = sql; return [LIN]; } },
+          { match: "catalogo_trgm", rows: [] },
+        ],
+      }),
+    });
+    await buscarCatalogoHibrido(env, { descricao: "parafuso", top_k: 5 });
+    expect(sqlFts).not.toContain("c.ativo = 1");
+    expect(topKVec).toBe(20);
+  });
+});

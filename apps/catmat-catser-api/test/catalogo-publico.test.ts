@@ -134,8 +134,14 @@ describe("navegar", () => {
     const env = envCom([
       {
         match: "FROM catalogo_itens WHERE",
-        resolver: (sql) =>
-          sql.includes("COUNT(*)") ? [{ n: 3 }] : [LINHA(1, "A"), LINHA(2, "B")],
+        // total=3, limit=2 → a busca pede limit+1 (=3); devolve 3 → há próxima.
+        resolver: (sql, binds) =>
+          sql.includes("COUNT(*)")
+            ? [{ n: 3 }]
+            : [LINHA(1, "A"), LINHA(2, "B"), LINHA(3, "C")].slice(
+                0,
+                Number(binds[binds.length - 1]),
+              ),
       },
     ]);
     const b = await corpo(
@@ -250,6 +256,55 @@ describe("filtro apenasAtivos (ativo=1)", () => {
 		]);
 		await publicoRouter(req("navegar?classe=C&ativo=1&limit=5"), env, jsonPublico);
 		expect(sqlVisto).toContain("ativo = ?");
+	});
+});
+
+describe("cursor keyset — última página cheia (achado P1 da review)", () => {
+	// resolver que devolve min(disponivel, limitPedido) linhas; o limit é o último bind.
+	const gerador = (disponivel: number) => (sql: string, binds: unknown[]) => {
+		if (sql.includes("COUNT(*)")) return [{ n: disponivel }];
+		const limitPedido = Number(binds[binds.length - 1]);
+		const linhas = [];
+		for (let i = 1; i <= Math.min(disponivel, limitPedido); i++) {
+			linhas.push({ ...LINHA(i, `IT ${i}`), atualizado_em: null });
+		}
+		return linhas;
+	};
+
+	it("página com EXATAMENTE limit itens (nada além) NAO gera next_cursor", async () => {
+		const env = envCom([{ match: "FROM catalogo_itens WHERE", resolver: gerador(5) }]);
+		const b = await corpo(await publicoRouter(req("navegar?classe=C&limit=5"), env, jsonPublico));
+		expect((b.itens as unknown[]).length).toBe(5);
+		expect(b.next_cursor).toBeNull(); // busca limit+1 (=6) só traz 5 → sem próxima
+	});
+
+	it("havendo mais que limit, gera next_cursor e devolve só limit", async () => {
+		const env = envCom([{ match: "FROM catalogo_itens WHERE", resolver: gerador(50) }]);
+		const b = await corpo(await publicoRouter(req("navegar?classe=C&limit=5"), env, jsonPublico));
+		expect((b.itens as unknown[]).length).toBe(5); // não vaza o 6º
+		expect(typeof b.next_cursor).toBe("string");
+	});
+});
+
+describe("erro público — mensagem genérica com correlação (achado P2 da review)", () => {
+	it("exceção interna não vaza detalhe; responde 500 com correlacao", async () => {
+		const env = createTestEnv({
+			DB: createFakeD1({
+				regras: [
+					{
+						match: "catalogo_fts",
+						resolver: () => {
+							throw new Error("no such table: catalogo_fts_secreta_xyz");
+						},
+					},
+				],
+			}),
+		});
+		const res = await publicoRouter(req("grep?q=abc"), env, jsonPublico);
+		const b = await corpo(res);
+		expect(res.status).toBe(500);
+		expect(JSON.stringify(b)).not.toContain("secreta_xyz");
+		expect(typeof b.correlacao).toBe("string");
 	});
 });
 

@@ -165,7 +165,23 @@ export async function publicoRouter(
         return json({ error: "rota não encontrada" }, 404);
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "erro na consulta";
-    return json({ error: `Falha na consulta de catálogo: ${msg}` }, 500);
+    // O detalhe (nomes de tabela/índice/infra) vai só para o log; o cliente
+    // recebe mensagem genérica + id de correlação (achado P2 da review).
+    const correlacao = crypto.randomUUID();
+    console.error(
+      JSON.stringify({
+        evento: "catalogo_publico_erro",
+        correlacao,
+        rota: url.pathname,
+        detalhe: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return json(
+      {
+        error: "Falha temporária na consulta de catálogo. Tente novamente.",
+        correlacao,
+      },
+      500,
+    );
   }
 }
