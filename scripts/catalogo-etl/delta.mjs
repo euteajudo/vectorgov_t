@@ -232,11 +232,23 @@ export function gerarDeltaSql(plano) {
 // Reconfere cada exclusão planejada na API oficial. Item que "sumiu" da fonte
 // mas AINDA responde na consulta unitária = paginação inconsistente (o
 // catálogo mudou no meio do fetch) — excluir seria destruir dado bom.
-export async function confirmarExclusoes(ids, { fetchImpl = fetch, pausaMs = 100 } = {}) {
+// Conferência que FALHA (429/5xx/timeout persistentes) não derruba o ciclo:
+// o item vai em `naoConfirmados` e o chamador o MANTÉM no índice nesta
+// rodada (só se exclui ausência confirmada; re-tenta no próximo ciclo).
+// Antes, um único endpoint instável abortava o apply inteiro — o run
+// 29578981347 (17/07/2026) morreu assim no cat-servico-24090.
+export async function confirmarExclusoes(
+  ids,
+  { fetchImpl = fetch, pausaMs = 100, backoffMs = 1000 } = {},
+) {
   const MAX_CONFERENCIAS = 3000; // acima disso a intenção já passou por override humano
+  const MAX_FALHAS_SEGUIDAS = 5; // API unitária fora do ar: para de martelar
   const conferir = ids.slice(0, MAX_CONFERENCIAS);
   const aindaExistem = [];
-  for (const id of conferir) {
+  const naoConfirmados = [];
+  let falhasSeguidas = 0;
+  for (let i = 0; i < conferir.length; i++) {
+    const id = conferir[i];
     const m = /^cat-(material|servico)-(\d+)$/.exec(id);
     if (!m) continue; // id fora do padrão nunca veio das fontes — deixa excluir
     const [, tipo, codigo] = m;
@@ -245,25 +257,41 @@ export async function confirmarExclusoes(ids, { fetchImpl = fetch, pausaMs = 100
         ? `https://dadosabertos.compras.gov.br/modulo-material/4_consultarItemMaterial?pagina=1&tamanhoPagina=10&codigoItem=${codigo}`
         : `https://dadosabertos.compras.gov.br/modulo-servico/6_consultarItemServico?pagina=1&tamanhoPagina=10&codigoServico=${codigo}`;
     let json = null;
-    for (let tentativa = 1; tentativa <= 4; tentativa++) {
-      const res = await fetchImpl(url, {
-        headers: { accept: "application/json" },
-        signal: AbortSignal.timeout(60_000),
-      });
-      if (res.ok) {
+    for (let tentativa = 1; tentativa <= 6; tentativa++) {
+      let res = null;
+      try {
+        res = await fetchImpl(url, {
+          headers: { accept: "application/json" },
+          signal: AbortSignal.timeout(60_000),
+        });
+      } catch {
+        // timeout/erro de rede — mesmo tratamento do 5xx (retry abaixo)
+      }
+      if (res?.ok) {
         json = await res.json();
         break;
       }
-      if (res.status !== 429 && res.status < 500) {
-        throw new Error(`Confirmação de exclusão: API ${res.status} para ${id}`);
-      }
-      await new Promise((r) => setTimeout(r, 1000 * 2 ** (tentativa - 1)));
+      // 4xx firme (não-429): a consulta unitária não vai mudar de resposta —
+      // inconfirmável, sem insistir.
+      if (res && res.status !== 429 && res.status < 500) break;
+      await new Promise((r) => setTimeout(r, backoffMs * 2 ** Math.min(tentativa - 1, 4)));
     }
-    if (json === null) throw new Error(`Confirmação de exclusão: retries esgotados para ${id}`);
-    if ((json.resultado ?? []).length > 0) aindaExistem.push(id);
+    if (json === null) {
+      naoConfirmados.push(id);
+      falhasSeguidas += 1;
+      if (falhasSeguidas >= MAX_FALHAS_SEGUIDAS) {
+        // Indisponibilidade sistêmica: os restantes ficam sem conferência
+        // (e portanto sem exclusão) nesta rodada.
+        naoConfirmados.push(...conferir.slice(i + 1));
+        break;
+      }
+    } else {
+      falhasSeguidas = 0;
+      if ((json.resultado ?? []).length > 0) aindaExistem.push(id);
+    }
     if (pausaMs) await new Promise((r) => setTimeout(r, pausaMs));
   }
-  return { conferidos: conferir.length, aindaExistem };
+  return { conferidos: conferir.length, aindaExistem, naoConfirmados };
 }
 
 export function gerarRelatorioMd(rel) {
@@ -406,7 +434,9 @@ async function main() {
 
   if (CONFIRMAR && plano.excluidos.length > 0) {
     console.log(`Confirmando ${plano.excluidos.length} exclusões na API...`);
-    const { conferidos, aindaExistem } = await confirmarExclusoes(plano.excluidos);
+    const { conferidos, aindaExistem, naoConfirmados } = await confirmarExclusoes(
+      plano.excluidos,
+    );
     if (aindaExistem.length > 0) {
       console.error(
         `Exclusão fantasma: ${aindaExistem.length}/${conferidos} itens "excluídos" ` +
@@ -415,7 +445,27 @@ async function main() {
       );
       process.exit(3);
     }
-    console.log(`OK: ${conferidos} exclusões confirmadas na fonte.`);
+    if (naoConfirmados.length > 0) {
+      // Ausência não confirmada ≠ ausência: ficam no índice nesta rodada e
+      // voltam ao plano no próximo ciclo. O relatório é regravado para o gate
+      // de contagem do workflow conferir contra o que será aplicado de fato.
+      const fora = new Set(naoConfirmados);
+      plano.excluidos = plano.excluidos.filter((id) => !fora.has(id));
+      rel.excluidos = plano.excluidos.length;
+      rel.exclusoes_nao_confirmadas = naoConfirmados.length;
+      rel.itens_esperados_apos_apply =
+        plano.totalD1 + plano.novos.length - plano.excluidos.length;
+      writeFileSync(`${OUT}/relatorio.json`, JSON.stringify(rel, null, 2) + "\n", "utf8");
+      writeFileSync(`${OUT}/relatorio.md`, gerarRelatorioMd(rel), "utf8");
+      console.warn(
+        `Aviso: ${naoConfirmados.length} exclusão(ões) sem confirmação (API unitária ` +
+          `instável; ex.: ${naoConfirmados.slice(0, 5).join(", ")}) — mantidas no índice ` +
+          "nesta rodada.",
+      );
+    }
+    console.log(
+      `OK: ${conferidos} conferências; ${plano.excluidos.length} exclusões seguem no plano.`,
+    );
   }
 
   writeFileSync(`${OUT}/delta-d1.sql`, gerarDeltaSql(plano), "utf8");
