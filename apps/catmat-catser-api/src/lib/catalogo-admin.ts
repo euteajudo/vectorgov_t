@@ -89,7 +89,7 @@ export function padraoParaSql(
   return { op: "LIKE", valor: escapado.replace(/\*/g, "%") };
 }
 
-interface FiltrosBrowse {
+export interface FiltrosBrowse {
   tipo?: TipoCatalogo;
   ativo?: 0 | 1;
   grupo?: string;
@@ -258,18 +258,30 @@ async function handleStats(env: Env): Promise<Response> {
   });
 }
 
-async function handleBrowse(env: Env, url: URL): Promise<Response> {
-  const filtros = lerFiltros(url);
-  if (filtros instanceof Response) return filtros;
-  const limitRaw = url.searchParams.get("limit");
-  const limit = limitRaw === null ? 50 : Number.parseInt(limitRaw, 10);
-  if (!Number.isInteger(limit) || limit < 1 || limit > LIMIT_MAX) {
-    return jsonAdmin({ error: `limit deve estar entre 1 e ${LIMIT_MAX}` }, 400);
-  }
-  const order = url.searchParams.get("order") ?? "codigo";
-  if (order !== "codigo" && order !== "atualizado_em") {
-    return jsonAdmin({ error: "order deve ser codigo|atualizado_em" }, 400);
-  }
+/**
+ * Consulta de itens com keyset — COMPARTILHADA entre a rota admin (browse)
+ * e a rota pública `navegar` da tool do MCP (SPEC-LOOP-TOOLS-CATALOGO-MCP).
+ */
+export async function consultarItens(
+  env: Env,
+  opts: {
+    filtros: FiltrosBrowse;
+    order: "codigo" | "atualizado_em";
+    cursor?: string | null;
+    limit: number;
+  },
+): Promise<
+  | {
+      ok: true;
+      itens: Record<string, unknown>[];
+      total: number;
+      total_capado: boolean;
+      next_cursor: string | null;
+      order: string;
+    }
+  | { ok: false; erro: string }
+> {
+  const { filtros, order, limit } = opts;
   const { where, binds } = montarWhere(filtros);
 
   // Ordenação TOTAL (order, codigo, tipo) + cursor keyset — sem OFFSET.
@@ -281,10 +293,9 @@ async function handleBrowse(env: Env, url: URL): Promise<Response> {
       : "(IFNULL(atualizado_em,''), codigo, tipo)";
   let cursorCond = "";
   const cursorBinds: unknown[] = [];
-  const cursorRaw = url.searchParams.get("cursor");
-  if (cursorRaw) {
-    const c = decodeCursor(cursorRaw);
-    if (!c) return jsonAdmin({ error: "cursor inválido" }, 400);
+  if (opts.cursor) {
+    const c = decodeCursor(opts.cursor);
+    if (!c) return { ok: false, erro: "cursor inválido" };
     if (order === "codigo") {
       cursorCond = " AND (codigo, tipo) > (?, ?)";
       cursorBinds.push(c[1], c[2]);
@@ -321,30 +332,34 @@ async function handleBrowse(env: Env, url: URL): Promise<Response> {
       ult.tipo,
     ]);
   }
-  return jsonAdmin({
+  return {
+    ok: true,
     itens: rows,
     total: Math.min(n, TOTAL_CAP),
     total_capado: n > TOTAL_CAP,
     next_cursor,
     order,
-  });
+  };
 }
 
-async function handleFacetas(env: Env, url: URL): Promise<Response> {
-  const dim = url.searchParams.get("dim") ?? "";
-  const COLUNAS_DIM: Record<string, string> = {
-    grupo: "grupo",
-    classe: "classe",
-    pdm: "pdm",
-    ncm: "ncm",
-  };
-  const coluna = COLUNAS_DIM[dim];
-  if (!coluna) {
-    return jsonAdmin({ error: "dim deve ser grupo|classe|pdm|ncm" }, 400);
-  }
-  const filtros = lerFiltros(url);
-  if (filtros instanceof Response) return filtros;
-  const { where, binds } = montarWhere(filtros);
+const COLUNAS_DIM: Record<string, string> = {
+  grupo: "grupo",
+  classe: "classe",
+  pdm: "pdm",
+  ncm: "ncm",
+};
+
+/** Facetas (valores distintos + contagens) — compartilhada admin/pública. */
+export async function consultarFacetas(
+  env: Env,
+  opts: { dim: string; filtros: FiltrosBrowse },
+): Promise<
+  | { ok: true; dim: string; facetas: Record<string, unknown>[]; distintos_total: number }
+  | { ok: false; erro: string }
+> {
+  const coluna = COLUNAS_DIM[opts.dim];
+  if (!coluna) return { ok: false, erro: "dim deve ser grupo|classe|pdm|ncm" };
+  const { where, binds } = montarWhere(opts.filtros);
   const [{ results: facetas }, distintos] = await Promise.all([
     env.DB.prepare(
       `SELECT ${coluna} AS valor, COUNT(*) AS n FROM catalogo_itens
@@ -359,11 +374,47 @@ async function handleFacetas(env: Env, url: URL): Promise<Response> {
       .bind(...binds)
       .first<{ n: number }>(),
   ]);
-  return jsonAdmin({
-    dim,
+  return {
+    ok: true,
+    dim: opts.dim,
     facetas: facetas ?? [],
     distintos_total: distintos?.n ?? 0,
+  };
+}
+
+async function handleBrowse(env: Env, url: URL): Promise<Response> {
+  const filtros = lerFiltros(url);
+  if (filtros instanceof Response) return filtros;
+  const limitRaw = url.searchParams.get("limit");
+  const limit = limitRaw === null ? 50 : Number.parseInt(limitRaw, 10);
+  if (!Number.isInteger(limit) || limit < 1 || limit > LIMIT_MAX) {
+    return jsonAdmin({ error: `limit deve estar entre 1 e ${LIMIT_MAX}` }, 400);
+  }
+  const order = url.searchParams.get("order") ?? "codigo";
+  if (order !== "codigo" && order !== "atualizado_em") {
+    return jsonAdmin({ error: "order deve ser codigo|atualizado_em" }, 400);
+  }
+  const r = await consultarItens(env, {
+    filtros,
+    order,
+    cursor: url.searchParams.get("cursor"),
+    limit,
   });
+  if (!r.ok) return jsonAdmin({ error: r.erro }, 400);
+  const { ok: _ok, ...corpo } = r;
+  return jsonAdmin(corpo);
+}
+
+async function handleFacetas(env: Env, url: URL): Promise<Response> {
+  const filtros = lerFiltros(url);
+  if (filtros instanceof Response) return filtros;
+  const r = await consultarFacetas(env, {
+    dim: url.searchParams.get("dim") ?? "",
+    filtros,
+  });
+  if (!r.ok) return jsonAdmin({ error: r.erro }, 400);
+  const { ok: _ok, ...corpo } = r;
+  return jsonAdmin(corpo);
 }
 
 /** Reconstrói o texto de embed pela regra ATUAL do ETL — rotulado na resposta. */
