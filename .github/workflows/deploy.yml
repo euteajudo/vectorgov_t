@@ -33,6 +33,7 @@ jobs:
       mcp-server: ${{ steps.filter.outputs.mcp-server }}
       ingestion-api: ${{ steps.filter.outputs.ingestion-api }}
       web-ui: ${{ steps.filter.outputs.web-ui }}
+      catmat-catser-api: ${{ steps.filter.outputs.catmat-catser-api }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -50,6 +51,11 @@ jobs:
               - 'pnpm-workspace.yaml'
             web-ui:
               - 'apps/web-ui/**'
+              - 'packages/schemas/**'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+            catmat-catser-api:
+              - 'apps/catmat-catser-api/**'
               - 'packages/schemas/**'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
@@ -81,6 +87,29 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: apps/mcp-server
           command: deploy
+
+  # catmat-catser-api: deploy é MANUAL (precisa da migração aplicada antes —
+  # ver scripts/catalogo-etl/). Aqui só CI (typecheck + testes) para o diretório
+  # não ficar fora da validação automatizada.
+  ci-catmat-catser-api:
+    name: CI catmat-catser-api
+    needs: changes
+    if: needs.changes.outputs.catmat-catser-api == 'true' || inputs.force_all == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm --filter @vectorgov-t/catmat-catser-api typecheck
+      - name: Test
+        run: pnpm --filter @vectorgov-t/catmat-catser-api test
 
   deploy-ingestion-api:
     name: Deploy ingestion-api
