@@ -339,20 +339,6 @@ function itemFromRow(r: CatalogoRow): ItemCatalogo {
   };
 }
 
-function itemFromMeta(meta: Record<string, unknown>): ItemCatalogo {
-  return {
-    codigo: Number(meta.codigo),
-    tipo: (meta.tipo as TipoCatalogo) ?? "material",
-    descricao: (meta.descricao as string) ?? "",
-    grupo: (meta.grupo as string) || null,
-    classe: (meta.classe as string) || null,
-    pdm: (meta.pdm as string) || null,
-    ncm: (meta.ncm as string) || null,
-    // Vector antigo pode não carregar `ativo` no metadata — assume ativo.
-    ativo: !(meta.ativo === 0 || meta.ativo === false),
-  };
-}
-
 /** Busca híbrida 3-way + rerank Cohere — resolve descrição → código de catálogo. */
 export async function buscarCatalogoHibrido(
   env: Env,
@@ -380,20 +366,45 @@ export async function buscarCatalogoHibrido(
   const rowById = new Map<string, CatalogoRow>();
   for (const r of trgmRows) rowById.set(r.catalogo_id, r);
   for (const r of ftsRows) rowById.set(r.catalogo_id, r);
-  const vecById = new Map(vecHits.map((h) => [h.id, h] as const));
   const ids = new Set<string>([
     ...vecHits.map((h) => h.id),
     ...ftsRows.map((r) => r.catalogo_id),
     ...trgmRows.map((r) => r.catalogo_id),
   ]);
 
+  // Hits que SÓ a lane semântica trouxe são confirmados no D1 antes de entrar
+  // no resultado: a recarga do Vectorize é por upsert e pode deixar vetores
+  // órfãos de itens excluídos da fonte — sem esta checagem, um órfão entraria
+  // no RRF e sairia no payload com a metadata velha do embed (até ativo=true).
+  // Quem confirma ganha de brinde os campos FRESCOS da linha (ativo/pdm/ncm
+  // atuais), em vez dos congelados na época do embed.
+  const soVetor = Array.from(ids).filter((id) => !rowById.has(id));
+  if (soVetor.length > 0) {
+    const placeholders = soVetor.map(() => "?").join(",");
+    const { results } = await env.DB.prepare(
+      `SELECT id AS catalogo_id, codigo, tipo, descricao, grupo, classe, pdm, ncm, ativo
+         FROM catalogo_itens WHERE id IN (${placeholders})`,
+    )
+      .bind(...soVetor)
+      .all<CatalogoRow>();
+    for (const r of results ?? []) rowById.set(r.catalogo_id, r);
+    const orfaos = soVetor.filter((id) => !rowById.has(id));
+    if (orfaos.length > 0) {
+      for (const id of orfaos) ids.delete(id);
+      console.log(
+        JSON.stringify({
+          evento: "catalogo_vetores_orfaos",
+          total: orfaos.length,
+          amostra: orfaos.slice(0, 3),
+        }),
+      );
+    }
+  }
+
   const fused = Array.from(ids)
     .map((id) => {
-      const row = rowById.get(id);
-      const meta = vecById.get(id)?.metadata;
-      const item = row ? itemFromRow(row) : itemFromMeta(meta!);
-      const pdm = row ? row.pdm : ((meta?.pdm as string) || null);
-      return { id, item, pdm, rrf: rrf.get(id) ?? 0 };
+      const row = rowById.get(id)!;
+      return { id, item: itemFromRow(row), pdm: row.pdm, rrf: rrf.get(id) ?? 0 };
     })
     .filter((x) => x.item.descricao.length > 0)
     .sort((a, b) => b.rrf - a.rrf)

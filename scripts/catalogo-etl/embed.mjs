@@ -24,7 +24,9 @@ import {
   writeFileSync,
   createWriteStream,
   readdirSync,
+  existsSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 
 const OUT = process.env.OUT_DIR || "./out";
 const ACCOUNT = process.env.CF_ACCOUNT_ID;
@@ -41,7 +43,9 @@ if (!ACCOUNT || !TOKEN) {
 
 const URL = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/ai/run/${MODEL}`;
 
-const itens = readFileSync(`${OUT}/itens.ndjson`, "utf8")
+const fonteRaw = readFileSync(`${OUT}/itens.ndjson`, "utf8");
+const hashFonte = createHash("sha256").update(fonteRaw).digest("hex");
+const itens = fonteRaw
   .split("\n")
   .filter(Boolean)
   .map((l) => JSON.parse(l));
@@ -78,6 +82,53 @@ for (let k = 0; k < existentes.length; k++) {
     jaFeitos += validas.length;
   } else {
     jaFeitos += linhas.length;
+  }
+}
+// A retomada por posição só é válida se os shards vieram DESTA fonte — um
+// itens.ndjson diferente (item novo, ordem nova) faria a contagem "bater" e
+// a recarga virar no-op silencioso preservando vetores da versão anterior.
+// O manifest amarra os shards ao sha256 da fonte; a checagem posicional pega
+// drift residual. Divergiu: abortamos com instrução, nunca descartamos os
+// shards sozinhos (eles custaram embedding pago).
+const MANIFEST = `${OUT}/embed-manifest.json`;
+if (existentes.length > 0) {
+  if (!existsSync(MANIFEST)) {
+    console.error(
+      `Shards vectors-*.ndjson existem em ${OUT} mas não há ${MANIFEST}.\n` +
+        "Origem desconhecida — apague os vectors-*.ndjson para reembeddar do zero, " +
+        "ou restaure o manifest da geração original.",
+    );
+    process.exit(1);
+  }
+  const man = JSON.parse(readFileSync(MANIFEST, "utf8"));
+  if (man.hashFonte !== hashFonte) {
+    console.error(
+      "itens.ndjson MUDOU desde a geração dos shards existentes.\n" +
+        `  manifest: ${man.hashFonte}\n  fonte:    ${hashFonte}\n` +
+        "Apague os vectors-*.ndjson + embed-manifest.json para reembeddar a fonte " +
+        "nova do zero, ou restaure o itens.ndjson original para só retomar.",
+    );
+    process.exit(1);
+  }
+} else {
+  writeFileSync(
+    MANIFEST,
+    JSON.stringify({ hashFonte, total: itens.length }, null, 2) + "\n",
+    "utf8",
+  );
+}
+if (jaFeitos > 0) {
+  const ultimoShard = `${OUT}/${existentes[existentes.length - 1]}`;
+  const linhasUlt = readFileSync(ultimoShard, "utf8").split("\n").filter(Boolean);
+  const ultimoId = JSON.parse(linhasUlt[linhasUlt.length - 1]).id;
+  const esperado = itens[jaFeitos - 1]?.id;
+  if (ultimoId !== esperado) {
+    console.error(
+      `Shard desalinhado da fonte: último vetor é ${ultimoId}, mas a posição ` +
+        `${jaFeitos} do itens.ndjson é ${esperado}. Fonte reordenada? ` +
+        "Apague os shards + manifest para reembeddar do zero.",
+    );
+    process.exit(1);
   }
 }
 if (jaFeitos > 0) console.log(`Retomando: ${jaFeitos} vetores já gerados.`);

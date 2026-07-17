@@ -57,6 +57,7 @@ Gera `out/catser-d1.sql` e `out/itens-servico.ndjson`.
 ### 2. D1 — aplicar migrations + importar
 ```
 wrangler d1 migrations apply catmat-catser-db --remote   # inclui a 0007 (ncm/atualizado_em + FTS com pdm)
+wrangler d1 execute catmat-catser-db --remote --json --command "SELECT id FROM catalogo_itens" > ./out/ids-antes.json
 wrangler d1 execute catmat-catser-db --remote --file scripts/catalogo-etl/sql/reset-pre-carga.sql
 wrangler d1 execute catmat-catser-db --remote --file ./out/catalogo-d1.sql
 wrangler d1 execute catmat-catser-db --remote --file ./out/catser-d1.sql
@@ -73,6 +74,10 @@ os triggers. Validar ao final:
 wrangler d1 execute catmat-catser-db --remote --command "SELECT (SELECT COUNT(*) FROM catalogo_itens) AS itens, (SELECT COUNT(*) FROM catalogo_fts) AS fts, (SELECT COUNT(*) FROM catalogo_trgm) AS trgm;"
 ```
 As três contagens devem coincidir.
+
+O `ids-antes.json` é o snapshot dos IDs da versão anterior — insumo do passo
+5b (limpeza de vetores órfãos no Vectorize). Exportar SEMPRE antes do reset;
+depois dele o conjunto antigo não existe mais em lugar nenhum.
 
 ### 3. Vectorize — criar índice + metadata index
 ```
@@ -101,7 +106,10 @@ Resumível e à prova de crash (o último arquivo-lote é revalidado linha a
 linha na retomada). Gera `out/vectors-000.ndjson`, `vectors-001.ndjson`, ...
 com até 40k vetores cada — o `wrangler vectorize upsert` trava com arquivos
 na casa de ~100k vetores, e lotes menores permitem retomar a carga do
-arquivo que falhou em vez de recomeçar.
+arquivo que falhou em vez de recomeçar. A retomada é amarrada à fonte por
+`out/embed-manifest.json` (sha256 do `itens.ndjson`) + checagem posicional de
+ID: se a fonte mudou/reordenou desde a geração dos shards, o script ABORTA com
+instrução em vez de "retomar" silenciosamente sobre a versão errada.
 
 **Custo estimado da carga completa (~346k itens)**: `texto_embed` médio de
 235 chars → ~23–27M tokens de entrada. Na tarifa vigente do `@cf/baai/bge-m3`
@@ -124,6 +132,24 @@ wrangler vectorize info catmat-catser
 O `vectorCount` deve convergir para o total embedado (a contagem do Vectorize
 atualiza com atraso de alguns minutos — repetir o `info` até estabilizar; se
 estacionar abaixo do total, reexecutar o upsert do(s) arquivo(s) que falharam).
+
+### 5b. Vectorize — remover vetores órfãos
+O upsert cria/sobrescreve, mas NÃO apaga IDs que sumiram da fonte — itens
+excluídos do catálogo ficariam como vetores órfãos no índice. Remover com o
+diff contra o snapshot do passo 2:
+```
+CF_ACCOUNT_ID=... CF_API_TOKEN=... OUT_DIR=./out node limpar-orfaos.mjs
+```
+(O motor tem defesa em query-time — hits vindos só da lane semântica são
+confirmados no D1 e órfãos são descartados/logados como
+`catalogo_vetores_orfaos` — mas a limpeza aqui evita custo de índice e ruído
+de recall.)
+
+**Alternativa para reset absoluto** (índice suspeito de inconsistência, sem
+snapshot de IDs): criar um índice novo versionado, carregar nele e trocar o
+binding — `wrangler vectorize create catmat-catser-v2 ...`, upsert completo,
+atualizar `index_name` nos wrangler.toml (catmat-catser-api e mcp-server),
+deploy, e só então `wrangler vectorize delete catmat-catser`.
 
 ## Amostra vs full
 Para validar rápido / conter custo, dá para embeddar só um recorte
